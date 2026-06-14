@@ -2,6 +2,10 @@
 
 set -e
 
+# Target architecture — Swarmarchy: aarch64 (Snapdragon X Elite).
+# Must match `arch=` in configs/profiledef.sh; archiso reads packages.${ARCH}.
+ARCH="${ARCH:-aarch64}"
+
 # Note that these are packages installed to the Arch container used to build the ISO.
 pacman-key --init
 pacman --noconfirm -Sy archlinux-keyring
@@ -21,9 +25,24 @@ offline_mirror_dir="$build_cache_dir/airootfs/var/cache/omarchy/mirror/offline"
 mkdir -p $build_cache_dir/
 mkdir -p $offline_mirror_dir/
 
-# We base our ISO on the official arch ISO (releng) config
+# We base our ISO on the official arch ISO (releng) config.
+# NOTE(aarch64): upstream archiso ships ONLY an x86_64 `releng` profile. The copy
+# below is x86-centric (packages.x86_64, syslinux/BIOS, x86 microcode). A fully
+# bootable aarch64 ISO needs this profile adapted for Arch Linux ARM. See
+# BUILD-AARCH64.md. We retarget the package-list filename and strip x86-only pkgs.
 cp -r /archiso/configs/releng/* $build_cache_dir/
 rm "$build_cache_dir/airootfs/etc/motd"
+
+# archiso reads packages.${arch}; rename the releng x86_64 list to our target arch
+# and drop entries that cannot resolve on aarch64.
+if [[ "$ARCH" != "x86_64" && -f "$build_cache_dir/packages.x86_64" ]]; then
+  mv "$build_cache_dir/packages.x86_64" "$build_cache_dir/packages.$ARCH"
+  sed -i -E '/^(intel-ucode|amd-ucode|memtest86\+|memtest86\+-efi|syslinux|edk2-shell|b43-fwcutter)$/d' \
+    "$build_cache_dir/packages.$ARCH"
+  # ALARM ships the generic kernel as `linux-aarch64`, not `linux`.
+  sed -i -E 's/^linux$/linux-aarch64/; s/^linux-headers$/linux-aarch64-headers/' \
+    "$build_cache_dir/packages.$ARCH"
+fi
 
 # Avoid using reflector for mirror identification as we are relying on the global CDN
 rm -rf "$build_cache_dir/airootfs/etc/systemd/system/multi-user.target.wants/reflector.service"
@@ -56,8 +75,8 @@ NODE_DIST_URL="https://nodejs.org/dist/latest"
 
 # Get checksums and parse filename and SHA
 NODE_SHASUMS=$(curl -fsSL "$NODE_DIST_URL/SHASUMS256.txt")
-NODE_FILENAME=$(echo "$NODE_SHASUMS" | grep "linux-x64.tar.gz" | awk '{print $2}')
-NODE_SHA=$(echo "$NODE_SHASUMS" | grep "linux-x64.tar.gz" | awk '{print $1}')
+NODE_FILENAME=$(echo "$NODE_SHASUMS" | grep "linux-arm64.tar.gz" | awk '{print $2}')
+NODE_SHA=$(echo "$NODE_SHASUMS" | grep "linux-arm64.tar.gz" | awk '{print $1}')
 
 # Download the tarball
 curl -fsSL "$NODE_DIST_URL/$NODE_FILENAME" -o "/tmp/$NODE_FILENAME"
@@ -72,12 +91,14 @@ echo "$NODE_SHA /tmp/$NODE_FILENAME" | sha256sum -c - || {
 mkdir -p "$build_cache_dir/airootfs/opt/packages/"
 cp "/tmp/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
 
-# Add our additional packages to packages.x86_64
-arch_packages=(linux-t2 git gum jq openssl plymouth tzupdate omarchy-keyring lvm2 cryptsetup parted)
-printf '%s\n' "${arch_packages[@]}" >>"$build_cache_dir/packages.x86_64"
+# Add our additional packages to the live ISO package list.
+# aarch64: dropped `linux-t2` (Apple) and `plymouth`. `omarchy-keyring` is x86-only
+# (TODO: provide an aarch64 keyring/repo before this will resolve).
+arch_packages=(git gum jq openssl tzupdate lvm2 cryptsetup parted)
+printf '%s\n' "${arch_packages[@]}" >>"$build_cache_dir/packages.$ARCH"
 
 # Build list of all the packages needed for the offline mirror
-all_packages=($(cat "$build_cache_dir/packages.x86_64"))
+all_packages=($(cat "$build_cache_dir/packages.$ARCH"))
 all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/omarchy-base.packages" | grep -v '^$'))
 all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/omarchy-other.packages" | grep -v '^$'))
 all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$'))

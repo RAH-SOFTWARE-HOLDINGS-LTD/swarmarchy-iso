@@ -1,0 +1,90 @@
+# Swarmarchy ISO build (aarch64 / Snapdragon X Elite target)
+#
+# Replaces the old nightly-build.yml, which referenced a nonexistent `build_iso.sh`
+# and built for x86_64. This workflow mirrors the real local flow in
+# `bin/omarchy-iso-make` (privileged Arch container running `builder/build-iso.sh`),
+# but on a native arm64 runner with an Arch Linux ARM base image.
+#
+# ──────────────────────────────────────────────────────────────────────────────
+# ⚠️  KNOWN BLOCKERS — this will NOT produce a bootable ISO until the build script
+#     and mirrors are ported to aarch64. See docs/summary-of-changes.md §4.
+#     1. builder/build-iso.sh hardcodes `packages.x86_64`, the x86 `releng` archiso
+#        profile, `linux-t2`, and Node `linux-x64`. Needs `packages.aarch64`,
+#        an aarch64 kernel, and Node `linux-arm64`.
+#     2. The Omarchy package CDN (configs/pacman-online-*.conf + omarchy-keyring)
+#        is x86_64-only. aarch64 needs an Arch Linux ARM mirror AND the omarchy-repo
+#        packages (e.g. `walker`) rebuilt for ARM, or the `pacman -Syw` step fails.
+#     3. archinstall.packages ships intel-ucode/amd-ucode/sof-firmware (x86 only).
+#     Until then, run via workflow_dispatch to exercise the pipeline; expect the
+#     package-download step to fail on unresolved aarch64 packages.
+# ──────────────────────────────────────────────────────────────────────────────
+
+name: Build ISO (aarch64)
+
+on:
+  workflow_dispatch:
+    inputs:
+      installer_ref:
+        description: "swarmarchy installer git ref (branch/tag)"
+        required: false
+        default: "master"
+      mirror:
+        description: "Package mirror channel (stable|rc|edge)"
+        required: false
+        default: "stable"
+  schedule:
+    - cron: "1 0 * * *" # nightly at 00:01 UTC
+
+permissions:
+  contents: read
+
+env:
+  # Native arm64 Arch image. Swap if you prefer menci/archlinuxarm etc.
+  ARCH_BASE_IMAGE: "lopsided/archlinux-arm64v8:latest"
+  OMARCHY_INSTALLER_REPO: "RAH-SOFTWARE-HOLDINGS-LTD/swarmarchy"
+  OMARCHY_INSTALLER_REF: ${{ github.event.inputs.installer_ref || 'master' }}
+  OMARCHY_MIRROR: ${{ github.event.inputs.mirror || 'stable' }}
+
+jobs:
+  build-iso:
+    # GitHub-hosted native arm64 runner (no qemu emulation needed).
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout (with archiso submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Prepare output dir
+        run: mkdir -p release
+
+      - name: Build ISO in privileged Arch (ARM) container
+        run: |
+          set -euxo pipefail
+          docker run --rm --privileged \
+            -e "OMARCHY_INSTALLER_REPO=${OMARCHY_INSTALLER_REPO}" \
+            -e "OMARCHY_INSTALLER_REF=${OMARCHY_INSTALLER_REF}" \
+            -e "OMARCHY_MIRROR=${OMARCHY_MIRROR}" \
+            -e "HOST_UID=$(id -u)" \
+            -e "HOST_GID=$(id -g)" \
+            -v "${GITHUB_WORKSPACE}/release:/out" \
+            -v "${GITHUB_WORKSPACE}/archiso:/archiso:ro" \
+            -v "${GITHUB_WORKSPACE}/builder:/builder:ro" \
+            -v "${GITHUB_WORKSPACE}/configs:/configs:ro" \
+            "${ARCH_BASE_IMAGE}" \
+            /builder/build-iso.sh
+
+      - name: List build output
+        if: always()
+        run: ls -lh release/ || true
+
+      - name: Upload ISO artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: swarmarchy-iso-${{ github.run_number }}
+          path: release/*.iso
+          retention-days: 14
+          if-no-files-found: error

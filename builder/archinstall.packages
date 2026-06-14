@@ -1,14 +1,16 @@
 alsa-firmware
-amd-ucode
 base
 base-devel
 efibootmgr
-intel-ucode
 linux-firmware
-linux
+# aarch64: generic Arch Linux ARM kernel. Swap for a Snapdragon-X kernel
+# (e.g. linux-x1e) once it is packaged for the mirror.
+linux-aarch64
 limine
-omarchy-keyring
 openssh
 pipewire
 snapper
-sof-firmware
+# Removed for aarch64:
+#   amd-ucode, intel-ucode  -> x86 CPU microcode (n/a on ARM)
+#   sof-firmware            -> Intel audio DSP firmware (n/a)
+# TODO(aarch64): omarchy-keyring is x86-only; restore once an aarch64 omarchy repo exists.
