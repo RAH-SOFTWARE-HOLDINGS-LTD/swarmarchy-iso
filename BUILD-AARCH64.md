@@ -34,9 +34,34 @@ This repo was forked from `omarchy-iso` (x86_64) and is being retargeted to
    profile. The bootloader path (`uefi.grub`) and the live kernel need an aarch64
    profile. Consider `archboot` (which does build aarch64 ISOs) as an alternative
    assembler if mkarchiso/releng proves too x86-bound.
-4. **Snapdragon X kernel + firmware.** The generic `linux-aarch64` won't fully
-   drive the X1E78100 (GPU/Wi-Fi/audio). Track the `linux-x1e` / aarch64-laptops
-   work and bake the right kernel + Qualcomm firmware.
+4. **Snapdragon X kernel + firmware** — *smaller than originally feared.*
+   - **Kernel: use mainline.** Yoga Slim 7x (X1E80100) support landed in **Linux
+     6.11** and has improved since; the device tree `qcom/x1e80100-lenovo-yoga-
+     slim7x.dtb` is **upstreamed**. So a recent mainline/ALARM **`linux-aarch64`
+     (6.14+) plus the upstream DTB** should boot the laptop — no from-scratch
+     `linux-x1e` build required. Verify which version covers your hardware.
+   - **GPU works:** Adreno **X1-85** uses Mesa **turnip** (Vulkan) + **freedreno**
+     (GL) — already in tree (`mesa` + `vulkan-freedreno`). (The bleeding-edge work
+     in the news is the newer **X2** Elite, not this machine.)
+   - **Firmware = extract from Windows.** Licensing blocks redistribution, so pull
+     the Qualcomm blobs from the Windows partition:
+     `\Windows\System32\DriverStore\FileRepository\*\*.mbn`/`.jsn`/`dtbs.elf`.
+     Convenient here since the machine dual-boots Windows.
+   - **Known rough edges (verify current):** early support lacked working
+     touchpad, internal mics (DMICs), and battery monitoring.
+
+## Reference implementations — don't reinvent
+The X1E Yoga has already been brought up by the community; follow these:
+- **Arch Linux ARM on this exact laptop:** joske's gist —
+  `https://gist.github.com/joske/52be3f1e5d0239706cd5a4252606644b` (primary guide).
+- **Full NixOS config for the X1E Yoga:** `https://github.com/kuruczgy/x1e-nixos-config`
+  (authoritative list of kernel/firmware/quirks).
+- **Easiest known-good baseline:** Ubuntu "Concept" ISO (24.10).
+- **Daily-driver writeup:** `https://varunpriolkar.com/2025/07/daily-driving-an-arm-linux-laptop/`
+
+> Strategy note: `swarmarchy` is a post-install layer, so the lowest-risk path is to
+> get a working Arch aarch64 base on the laptop (per joske's guide), then run the
+> installer over it — the custom ISO is polish, not a prerequisite.
 
 ## How to exercise the pipeline now
 
