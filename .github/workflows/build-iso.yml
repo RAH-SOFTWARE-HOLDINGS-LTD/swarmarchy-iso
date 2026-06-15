@@ -7,7 +7,7 @@
 #
 # ──────────────────────────────────────────────────────────────────────────────
 # ⚠️  KNOWN BLOCKERS — this will NOT produce a bootable ISO until the build script
-#     and mirrors are ported to aarch64. See docs/summary-of-changes.md §4.
+#     and mirrors are ported to aarch64. See docs/02-summary-of-changes.md §4.
 #     1. builder/build-iso.sh hardcodes `packages.x86_64`, the x86 `releng` archiso
 #        profile, `linux-t2`, and Node `linux-x64`. Needs `packages.aarch64`,
 #        an aarch64 kernel, and Node `linux-arm64`.
