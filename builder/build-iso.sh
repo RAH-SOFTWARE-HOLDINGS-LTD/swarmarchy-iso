@@ -66,9 +66,6 @@ fi
 mkdir -p "$build_cache_dir/airootfs/usr/local/bin/"
 cp "$build_cache_dir/airootfs/root/omarchy/bin/omarchy-upload-log" "$build_cache_dir/airootfs/usr/local/bin/omarchy-upload-log"
 
-# Copy the Omarchy Plymouth theme to the ISO
-mkdir -p "$build_cache_dir/airootfs/usr/share/plymouth/themes/omarchy"
-cp -r "$build_cache_dir/airootfs/root/omarchy/default/plymouth/"* "$build_cache_dir/airootfs/usr/share/plymouth/themes/omarchy/"
 
 # Download and verify Node.js binary for offline installation
 NODE_DIST_URL="https://nodejs.org/dist/latest"
