@@ -99,9 +99,11 @@ printf '%s\n' "${arch_packages[@]}" >>"$build_cache_dir/packages.$ARCH"
 
 # Build list of all the packages needed for the offline mirror
 all_packages=($(cat "$build_cache_dir/packages.$ARCH"))
-all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/omarchy-base.packages" | grep -v '^$'))
-all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/omarchy-other.packages" | grep -v '^$'))
-all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$'))
+# First-token parse so inline "package  # what it is" comments are ignored.
+strip_pkgs() { grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$1" | awk '{print $1}'; }
+all_packages+=($(strip_pkgs "$build_cache_dir/airootfs/root/omarchy/install/omarchy-base.packages"))
+all_packages+=($(strip_pkgs "$build_cache_dir/airootfs/root/omarchy/install/omarchy-other.packages"))
+all_packages+=($(strip_pkgs /builder/archinstall.packages))
 
 # Download all the packages to the offline mirror inside the ISO
 mkdir -p /tmp/offlinedb

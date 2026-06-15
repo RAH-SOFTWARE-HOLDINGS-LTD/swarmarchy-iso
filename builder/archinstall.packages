@@ -1,15 +1,17 @@
-alsa-firmware
-base
-base-devel
-efibootmgr
-linux-firmware
-# aarch64: generic Arch Linux ARM kernel. Swap for a Snapdragon-X kernel
-# (e.g. linux-x1e) once it is packaged for the mirror.
-linux-aarch64
-limine
-openssh
-pipewire
-snapper
+# Packages for the ISO's live environment + the base target install.
+# (build-iso.sh parses only the first token, so inline '# notes' are fine.)
+
+base               # core Arch base meta-package
+base-devel         # compilers/make — needed to build AUR packages on first boot
+linux-aarch64      # the live + install kernel (generic ARM; swap for a Snapdragon-X kernel)
+linux-firmware     # device firmware blobs (Wi-Fi/GPU/etc.)
+alsa-firmware      # extra sound-card firmware
+limine             # the bootloader (installed to the target disk)
+efibootmgr         # create/edit UEFI boot entries during install
+openssh            # SSH server/client (remote install or post-install access)
+pipewire           # audio in the live environment
+snapper            # set up Btrfs snapshots at install time
+
 # Removed for aarch64:
 #   amd-ucode, intel-ucode  -> x86 CPU microcode (n/a on ARM)
 #   sof-firmware            -> Intel audio DSP firmware (n/a)
