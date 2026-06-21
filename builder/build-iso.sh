@@ -11,17 +11,17 @@ pacman-key --init
 pacman --noconfirm -Sy archlinux-keyring
 pacman --noconfirm -Sy archiso git sudo base-devel jq grub
 
-# Pre-import the omarchy signing key so pacman can verify packages without a keyserver lookup
+# Pre-import the swarmarchy signing key so pacman can verify packages without a keyserver lookup
 pacman-key --add /builder/omarchy.gpg
 pacman-key --lsign-key 40DFB630FF42BCFFB047046CF0134EE680CAC571
 
 # Install omarchy-keyring for package verification during build
-pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Sy omarchy-keyring
-pacman-key --populate omarchy
+pacman --config /configs/pacman-online-${SWARMARCHY_MIRROR}.conf --noconfirm -Sy omarchy-keyring
+pacman-key --populate swarmarchy
 
 # Setup build locations
 build_cache_dir="/var/cache"
-offline_mirror_dir="$build_cache_dir/airootfs/var/cache/omarchy/mirror/offline"
+offline_mirror_dir="$build_cache_dir/airootfs/var/cache/swarmarchy/mirror/offline"
 mkdir -p $build_cache_dir/
 mkdir -p $offline_mirror_dir/
 
@@ -52,19 +52,19 @@ rm -rf "$build_cache_dir/airootfs/etc/xdg/reflector"
 # Bring in our configs
 cp -r /configs/* $build_cache_dir/
 
-# Persist OMARCHY_MIRROR so it's available at install time
-echo "$OMARCHY_MIRROR" > "$build_cache_dir/airootfs/root/omarchy_mirror"
+# Persist SWARMARCHY_MIRROR so it's available at install time
+echo "$SWARMARCHY_MIRROR" > "$build_cache_dir/airootfs/root/swarmarchy_mirror"
 
-# Setup Omarchy itself
-if [[ -d /omarchy ]]; then
-  cp -rp /omarchy "$build_cache_dir/airootfs/root/omarchy"
+# Setup Swarmarchy itself
+if [[ -d /swarmarchy ]]; then
+  cp -rp /swarmarchy "$build_cache_dir/airootfs/root/swarmarchy"
 else
-  git clone -b $OMARCHY_INSTALLER_REF https://github.com/$OMARCHY_INSTALLER_REPO.git "$build_cache_dir/airootfs/root/omarchy"
+  git clone -b $SWARMARCHY_INSTALLER_REF https://github.com/$SWARMARCHY_INSTALLER_REPO.git "$build_cache_dir/airootfs/root/swarmarchy"
 fi
 
 # Make log uploader available in the ISO too
 mkdir -p "$build_cache_dir/airootfs/usr/local/bin/"
-cp "$build_cache_dir/airootfs/root/omarchy/bin/omarchy-upload-log" "$build_cache_dir/airootfs/usr/local/bin/omarchy-upload-log"
+cp "$build_cache_dir/airootfs/root/swarmarchy/bin/swarmarchy-upload-log" "$build_cache_dir/airootfs/usr/local/bin/swarmarchy-upload-log"
 
 
 # Download and verify Node.js binary for offline installation
@@ -98,20 +98,20 @@ printf '%s\n' "${arch_packages[@]}" >>"$build_cache_dir/packages.$ARCH"
 all_packages=($(cat "$build_cache_dir/packages.$ARCH"))
 # First-token parse so inline "package  # what it is" comments are ignored.
 strip_pkgs() { grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$1" | awk '{print $1}'; }
-all_packages+=($(strip_pkgs "$build_cache_dir/airootfs/root/omarchy/install/omarchy-base.packages"))
-all_packages+=($(strip_pkgs "$build_cache_dir/airootfs/root/omarchy/install/omarchy-other.packages"))
+all_packages+=($(strip_pkgs "$build_cache_dir/airootfs/root/swarmarchy/install/swarmarchy-base.packages"))
+all_packages+=($(strip_pkgs "$build_cache_dir/airootfs/root/swarmarchy/install/swarmarchy-other.packages"))
 all_packages+=($(strip_pkgs /builder/archinstall.packages))
 
 # Download all the packages to the offline mirror inside the ISO
 mkdir -p /tmp/offlinedb
-pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
+pacman --config /configs/pacman-online-${SWARMARCHY_MIRROR}.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
 repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
 
 # Create a symlink to the offline mirror instead of duplicating it.
-# mkarchiso needs packages at /var/cache/omarchy/mirror/offline in the container,
-# but they're actually in $build_cache_dir/airootfs/var/cache/omarchy/mirror/offline
-mkdir -p /var/cache/omarchy/mirror
-ln -s "$offline_mirror_dir" "/var/cache/omarchy/mirror/offline"
+# mkarchiso needs packages at /var/cache/swarmarchy/mirror/offline in the container,
+# but they're actually in $build_cache_dir/airootfs/var/cache/swarmarchy/mirror/offline
+mkdir -p /var/cache/swarmarchy/mirror
+ln -s "$offline_mirror_dir" "/var/cache/swarmarchy/mirror/offline"
 
 # Copy the offline pacman.conf to the ISO's /etc directory so the live environment uses our
 # same config when booted. 

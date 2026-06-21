@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+cleanup() {
+  [[ -n "${mock_swarmarchy_install:-}" ]] && rm -rf "$(dirname "$mock_swarmarchy_install")"
+}
+trap cleanup EXIT
+
+if [[ -z "${SWARMARCHY_INSTALL:-}" ]]; then
+  if [[ -r /root/swarmarchy/install/helpers/all.sh ]]; then
+    export SWARMARCHY_INSTALL=/root/swarmarchy/install
+  else
+    mock_root="$(mktemp -d)"
+    mock_swarmarchy_install="$mock_root/install"
+    mkdir -p "$mock_swarmarchy_install/helpers"
+    cat >"$mock_swarmarchy_install/helpers/all.sh" <<'EOF'
+PADDING_LEFT=0
+PADDING_LEFT_SPACES=""
+clear_logo() { clear; }
+EOF
+    export SWARMARCHY_INSTALL="$mock_swarmarchy_install"
+  fi
+fi
+
+exec bash "$repo_root/configs/airootfs/root/configurator" dry "$@"

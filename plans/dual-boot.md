@@ -1,8 +1,8 @@
-# Dual-Boot Installation Support for Omarchy ISO
+# Dual-Boot Installation Support for Swarmarchy ISO
 
 ## Context
 
-Currently, the Omarchy installer wipes the entire selected disk (`"wipe": true`) and creates two partitions: a 2GB FAT32 ESP and a LUKS-encrypted Btrfs root. This means users must dedicate an entire disk to Omarchy. Adding dual-boot support lets users install alongside an existing OS (typically Windows) while keeping the Omarchy partition encrypted.
+Currently, the Swarmarchy installer wipes the entire selected disk (`"wipe": true`) and creates two partitions: a 2GB FAT32 ESP and a LUKS-encrypted Btrfs root. This means users must dedicate an entire disk to Swarmarchy. Adding dual-boot support lets users install alongside an existing OS (typically Windows) while keeping the Swarmarchy partition encrypted.
 
 ## Core Approach: `pre_mounted_config`
 
@@ -31,7 +31,7 @@ The existing full-disk path stays completely unchanged. Dual-boot is a parallel 
 
 - **UEFI/GPT only** — dual-boot on MBR/BIOS is too fragile; those users get full-disk only
 - **No auto-shrinking** — users must free up space from their existing OS first (e.g., Windows Disk Management). Too risky to shrink partitions automatically
-- **Minimum 20GB free space** required for Omarchy
+- **Minimum 20GB free space** required for Swarmarchy
 
 ## User Flow
 
@@ -91,7 +91,7 @@ ESP_PARTITION=/dev/nvme0n1p1
 1. Select the largest contiguous free region and run `sgdisk` to create new partition there (type 8309 = Linux LUKS)
 2. `partprobe "$DISK"` + `udevadm settle` so new partition node is present
 3. `cryptsetup luksFormat` + `luksOpen` with user's password
-4. `mkfs.btrfs` on `/dev/mapper/omarchy_root`
+4. `mkfs.btrfs` on `/dev/mapper/swarmarchy_root`
 5. Create Btrfs subvolumes: `@`, `@home`, `@log`, `@pkg`
 6. Mount subvolumes at `/mnt/archinstall` with `compress=zstd`
 7. Mount existing ESP (untouched) at `/mnt/archinstall/boot`
@@ -99,16 +99,16 @@ ESP_PARTITION=/dev/nvme0n1p1
 
 **Add `configure_dual_boot_post_install()`** — runs after archinstall:
 
-1. Write `/etc/crypttab` entry using LUKS UUID/PARTUUID (stable identifier), e.g. `omarchy_root UUID=<luks-uuid> none luks,discard`
+1. Write `/etc/crypttab` entry using LUKS UUID/PARTUUID (stable identifier), e.g. `swarmarchy_root UUID=<luks-uuid> none luks,discard`
 2. Update mkinitcpio hooks before `filesystems`: `encrypt` (busybox) or `sd-encrypt` (systemd)
 3. Regenerate initramfs with `arch-chroot "$INSTALL_ROOT" mkinitcpio -P`
 4. Configure Limine kernel cmdline to match initramfs mode:
-   - busybox `encrypt`: `cryptdevice=UUID=<uuid>:omarchy_root root=/dev/mapper/omarchy_root`
-   - systemd `sd-encrypt`: `rd.luks.name=<uuid>=omarchy_root root=/dev/mapper/omarchy_root` (or equivalent `rd.luks.uuid=` form)
+   - busybox `encrypt`: `cryptdevice=UUID=<uuid>:swarmarchy_root root=/dev/mapper/swarmarchy_root`
+   - systemd `sd-encrypt`: `rd.luks.name=<uuid>=swarmarchy_root root=/dev/mapper/swarmarchy_root` (or equivalent `rd.luks.uuid=` form)
 5. Run `arch-chroot "$INSTALL_ROOT" limine-scan` to detect other OS boot entries (Windows, etc.)
 6. Preserve current firmware default boot order unless user explicitly chooses to make Limine first (capture and restore `BootOrder` if `efibootmgr` side effects reorder entries)
 
-**Use `$INSTALL_ROOT` variable** — defaults to `/mnt` for full-disk, `/mnt/archinstall` for dual-boot. Post-install steps (offline mirror bind-mount, sudoers, omarchy copy) reference this instead of hardcoded `/mnt`.
+**Use `$INSTALL_ROOT` variable** — defaults to `/mnt` for full-disk, `/mnt/archinstall` for dual-boot. Post-install steps (offline mirror bind-mount, sudoers, swarmarchy copy) reference this instead of hardcoded `/mnt`.
 
 ### 3. `builder/build-iso.sh` + `builder/archinstall.packages`
 

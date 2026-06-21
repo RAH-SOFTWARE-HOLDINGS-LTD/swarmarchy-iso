@@ -7,7 +7,7 @@ Implement one shared non-destructive install path that supports both:
 - Dual-boot installs alongside an existing OS.
 - OEM/restore installs from a permanent internal restore partition set.
 
-Beyond install: every standalone Omarchy machine — whether OEM-provisioned or installed from the consumer ISO onto an empty disk — exposes a "factory reset" command that durably stages the next boot into the on-disk restore partition set. The installed-OS command leaves the machine as though it had just been prepared to boot from restore; the restore environment owns the destructive wipe/reinstall flow. Dual-boot installs do not get factory reset (no room for a restore partition set).
+Beyond install: every standalone Swarmarchy machine — whether OEM-provisioned or installed from the consumer ISO onto an empty disk — exposes a "factory reset" command that durably stages the next boot into the on-disk restore partition set. The installed-OS command leaves the machine as though it had just been prepared to boot from restore; the restore environment owns the destructive wipe/reinstall flow. Dual-boot installs do not get factory reset (no room for a restore partition set).
 
 The current full-disk install path remains unchanged until the protected-partition path is proven. The protected path does its own partitioning, encryption, filesystems, mounts, and boot configuration, then hands a prepared mount tree to archinstall with `pre_mounted_config`.
 
@@ -17,8 +17,8 @@ Use a single installer engine with multiple partition policies.
 
 ```text
 full_disk        existing archinstall default_layout + wipe:true path
-dual_boot        protect existing OS partitions, reuse existing ESP, add Omarchy LUKS root
-restore_install  protect restore partition set, create/recreate installed ESP + Omarchy LUKS root
+dual_boot        protect existing OS partitions, reuse existing ESP, add Swarmarchy LUKS root
+restore_install  protect restore partition set, create/recreate installed ESP + Swarmarchy LUKS root
 ```
 
 The key rule: protected modes must never pass the whole disk to archinstall with `wipe: true`.
@@ -29,7 +29,7 @@ Dual-boot and restore installs are the same technical problem:
 
 1. Detect disk layout.
 2. Identify protected partitions.
-3. Create or format only explicitly writable Omarchy partitions.
+3. Create or format only explicitly writable Swarmarchy partitions.
 4. Set up encrypted root manually.
 5. Mount a complete install tree manually.
 6. Run archinstall only as a package/base-system installer.
@@ -43,11 +43,11 @@ Only the partition policy differs.
 - Existing BIOS/syslinux ISO behavior stays available for normal full-disk installs.
 - No automatic shrinking of existing partitions.
 - Dual-boot requires pre-existing free space.
-- Restore install requires a detected Omarchy restore partition set.
-- Installed Omarchy root is encrypted with LUKS.
+- Restore install requires a detected Swarmarchy restore partition set.
+- Installed Swarmarchy root is encrypted with LUKS.
 - Restore partitions are not encrypted unless a later product requirement demands it.
 - Restore payload partitions are normally left unmounted in the installed OS and mounted read-only by the restore environment. A separate restore state partition is the only restore-owned partition mounted read-write for reset triggers and recovery logs.
-- Swap matches the current full-disk install: zram for memory pressure, plus a Btrfs swapfile in a dedicated `NODATACOW` `/swap` subvolume sized to RAM for hibernation. The subvolume, swapfile, `resume` mkinitcpio hook, and `resume=<dev> resume_offset=<offset>` Limine cmdline drop-in are created post-install by Omarchy's existing `omarchy-hibernation-setup`. Protected modes must not break this: the `encrypt`/`sd-encrypt` hook must precede `resume` in mkinitcpio so the swapfile is reachable after LUKS unlock, and Limine must honor `/etc/limine-entry-tool.d/*.conf` drop-ins so the post-install hook can append resume parameters. No swap partition.
+- Swap matches the current full-disk install: zram for memory pressure, plus a Btrfs swapfile in a dedicated `NODATACOW` `/swap` subvolume sized to RAM for hibernation. The subvolume, swapfile, `resume` mkinitcpio hook, and `resume=<dev> resume_offset=<offset>` Limine cmdline drop-in are created post-install by Swarmarchy's existing `swarmarchy-hibernation-setup`. Protected modes must not break this: the `encrypt`/`sd-encrypt` hook must precede `resume` in mkinitcpio so the swapfile is reachable after LUKS unlock, and Limine must honor `/etc/limine-entry-tool.d/*.conf` drop-ins so the post-install hook can append resume parameters. No swap partition.
 
 ## Partition Policies
 
@@ -91,18 +91,18 @@ After install:
 p1  existing ESP       FAT32   protected, mounted as /efi during install
 p2  Windows MSR        MSR     protected
 p3  Windows            NTFS    protected
-p4  Omarchy root       LUKS    new encrypted Btrfs root
+p4  Swarmarchy root       LUKS    new encrypted Btrfs root
 ```
 
 Policy:
 
 - Protect all existing partitions.
-- Reuse the existing ESP only for Omarchy boot files under `EFI/Omarchy`. Do not write top-level `vmlinuz-*`, `initramfs-*`, or vendor-looking paths on a shared ESP.
-- Mount the shared ESP at `/efi`, keep `/boot` on the encrypted root, and install an Omarchy-owned kernel/initramfs sync hook that copies boot artifacts into `/efi/EFI/Omarchy` after kernel or initramfs updates.
-- Refuse to install if the existing ESP is below 200 MB total or has less than 150 MB free. Warn below 300 MB total or below 200 MB free. These thresholds size for one Omarchy kernel + initramfs + Limine alongside a typical vendor loader; revisit if the Omarchy initramfs grows materially. Free space must be measured from the mounted ESP, not inferred from partition size.
+- Reuse the existing ESP only for Swarmarchy boot files under `EFI/Swarmarchy`. Do not write top-level `vmlinuz-*`, `initramfs-*`, or vendor-looking paths on a shared ESP.
+- Mount the shared ESP at `/efi`, keep `/boot` on the encrypted root, and install an Swarmarchy-owned kernel/initramfs sync hook that copies boot artifacts into `/efi/EFI/Swarmarchy` after kernel or initramfs updates.
+- Refuse to install if the existing ESP is below 200 MB total or has less than 150 MB free. Warn below 300 MB total or below 200 MB free. These thresholds size for one Swarmarchy kernel + initramfs + Limine alongside a typical vendor loader; revisit if the Swarmarchy initramfs grows materially. Free space must be measured from the mounted ESP, not inferred from partition size.
 - Create one new LUKS partition in the largest single contiguous free region of at least 40 GB. Refuse otherwise. Do not stitch across multiple non-contiguous regions.
-- Preserve current firmware boot order unless the user explicitly opts to make Omarchy first.
-- Abort with a clear error if any Windows partition is detected as BitLocker/FVE, including suspended BitLocker. Do not proceed past detection. Adding a new partition to a disk with a BitLocker-protected volume changes the firmware/boot environment enough that Windows can demand the recovery key on next boot — and many users do not have it. The error message must instruct the user to turn off BitLocker from inside Windows and wait for decryption to complete, then reboot into the Omarchy installer and retry. Do not offer an "I have my recovery key, continue anyway" override in v1; users who really want it can fully disable BitLocker themselves.
+- Preserve current firmware boot order unless the user explicitly opts to make Swarmarchy first.
+- Abort with a clear error if any Windows partition is detected as BitLocker/FVE, including suspended BitLocker. Do not proceed past detection. Adding a new partition to a disk with a BitLocker-protected volume changes the firmware/boot environment enough that Windows can demand the recovery key on next boot — and many users do not have it. The error message must instruct the user to turn off BitLocker from inside Windows and wait for decryption to complete, then reboot into the Swarmarchy installer and retry. Do not offer an "I have my recovery key, continue anyway" override in v1; users who really want it can fully disable BitLocker themselves.
 - Warn if non-BitLocker Windows is detected, since boot order changes can still surprise users.
 
 ### Restore Install
@@ -121,8 +121,8 @@ Policy:
 
 - Protect restore ESP, restore payload, and restore state partitions from delete/format operations. Only the restore state partition is mounted read-write, and only for trigger files and logs.
 - On first boot, create installed ESP and installed root in remaining disk space.
-- On reinstall, format the installed Omarchy partitions in place by default. Only delete and recreate them when their geometry no longer matches policy (e.g. the disk was resized). Format-in-place preserves PARTUUIDs, keeps NVRAM entries valid, and avoids touching the partition table.
-- Set installed Omarchy first in boot order after successful install.
+- On reinstall, format the installed Swarmarchy partitions in place by default. Only delete and recreate them when their geometry no longer matches policy (e.g. the disk was resized). Format-in-place preserves PARTUUIDs, keeps NVRAM entries valid, and avoids touching the partition table.
+- Set installed Swarmarchy first in boot order after successful install.
 - Keep restore boot available as firmware fallback and as a boot menu entry.
 - Require `copytoram=y` before mutating the internal disk from restore mode.
 
@@ -133,26 +133,26 @@ Use separate restore and installed ESPs for v1. A shared ESP saves space but mak
 Create a factory artifact separate from the normal consumer ISO:
 
 ```text
-omarchy-restore.img.zst
+swarmarchy-restore.img.zst
 ```
 
 Factory provisioning writes this image to the internal disk once:
 
 ```bash
-zstd -dc omarchy-restore.img.zst | dd of=/dev/nvme0n1 bs=16M status=progress conv=fsync
+zstd -dc swarmarchy-restore.img.zst | dd of=/dev/nvme0n1 bs=16M status=progress conv=fsync
 ```
 
 The restore image should contain:
 
 - A restore ESP with `EFI/BOOT/BOOTX64.EFI` fallback boot path.
-- A restore payload partition labeled `OMARCHY_RESTORE`.
-- A small restore state partition labeled `OMARCHY_STATE` for reset triggers and recovery logs.
+- A restore payload partition labeled `SWARMARCHY_RESTORE`.
+- A small restore state partition labeled `SWARMARCHY_STATE` for reset triggers and recovery logs.
 - The archiso live environment payload, offline package mirror, configurator, and installer scripts.
-- A boot entry that passes `omarchy.mode=restore copytoram=y`.
+- A boot entry that passes `swarmarchy.mode=restore copytoram=y`.
 - Boot configuration that locates the restore payload by stable label/UUID, not by transient disk name.
 - A signed manifest covering the archiso payload and offline mirror. The verification public key must be shipped outside the mutable restore payload, such as in the restore boot environment and installed reset tool package.
 
-The factory flasher must verify the integrity of `omarchy-restore.img.zst` before writing. The on-disk restore environment must verify its signed payload manifest at boot before mutating the internal disk. A plain checksum stored on the same writable disk is not sufficient. Without a signed manifest, a tampered or corrupted restore image silently destroys the user's data the next time they invoke "factory reset."
+The factory flasher must verify the integrity of `swarmarchy-restore.img.zst` before writing. The on-disk restore environment must verify its signed payload manifest at boot before mutating the internal disk. A plain checksum stored on the same writable disk is not sufficient. Without a signed manifest, a tampered or corrupted restore image silently destroys the user's data the next time they invoke "factory reset."
 
 On first restore boot:
 
@@ -165,19 +165,19 @@ On first restore boot:
 
 ## Factory Reset
 
-Goal: an installed Omarchy machine that has a restore partition set (any standalone install — `restore_install` today, `full_disk` after Phase 7) exposes a user-facing factory reset command that prepares the device to boot from internal restore without external media. After the next restore boot, the restore environment returns the device to a fresh-install state.
+Goal: an installed Swarmarchy machine that has a restore partition set (any standalone install — `restore_install` today, `full_disk` after Phase 7) exposes a user-facing factory reset command that prepares the device to boot from internal restore without external media. After the next restore boot, the restore environment returns the device to a fresh-install state.
 
 ### User Flow
 
-1. User runs `omarchy-factory-reset` from a terminal with sudo. (A GUI entry under Settings is deferred to a follow-up.)
+1. User runs `swarmarchy-factory-reset` from a terminal with sudo. (A GUI entry under Settings is deferred to a follow-up.)
 2. The command prints which partitions will be destroyed (installed ESP, installed root) and which will be preserved (restore ESP, restore payload, restore state), by stable identifier, and asks the user to type a confirmation phrase. The typed-phrase gate is intentional friction; no `--yes` shortcut in v1.
 3. On confirmation, the command writes a trigger file to the restore state partition, verifies or recreates the restore boot entry, and sets `BootNext` via `efibootmgr` to that restore entry.
 4. The command exits only after the trigger file is fsynced, the restore state partition is unmounted, and `BootNext` is confirmed. At that point the installed-OS side is complete: the machine has been left as though it had just been prepared to boot from the restore partition.
 5. The user reboots when ready. A later GUI may offer a "reboot now" action, but rebooting is a convenience after the staged state is durable, not part of the safety-critical mutation.
 6. The restore environment detects the trigger on boot, verifies the signed restore payload manifest, writes a reset-in-progress marker to restore state, and temporarily sets persistent `BootOrder` to restore first before mutating installed partitions.
 7. The restore environment runs the existing `restore_install` reinstall path — format installed ESP, LUKS-format installed root, run the standard install flow — non-interactively, then deletes the trigger and reset-in-progress marker.
-8. On install completion, the restore environment restores persistent `BootOrder` to installed Omarchy first, restore second, sets `BootNext` to the installed Omarchy entry, and reboots.
-9. The user lands in a fresh installed Omarchy. Normal persistent `BootOrder` (Omarchy first, restore second) has been restored.
+8. On install completion, the restore environment restores persistent `BootOrder` to installed Swarmarchy first, restore second, sets `BootNext` to the installed Swarmarchy entry, and reboots.
+9. The user lands in a fresh installed Swarmarchy. Normal persistent `BootOrder` (Swarmarchy first, restore second) has been restored.
 
 User data on installed ESP and installed root is destroyed. Restore ESP, restore payload, and restore state are protected from destructive operations throughout. The restore payload is the source of truth for the rebuild; restore state contains only trigger and recovery state.
 
@@ -185,19 +185,19 @@ User data on installed ESP and installed root is destroyed. Restore ESP, restore
 
 Use a flag file on the restore state partition rather than NVRAM variables or the restore payload. NVRAM is fragile across firmware updates, and the restore payload should stay immutable/read-only so signed manifest verification remains meaningful.
 
-- Path: `<restore-state-mount>/.omarchy-factory-reset`
+- Path: `<restore-state-mount>/.swarmarchy-factory-reset`
 - Contents: timestamp, hostname at trigger time, optional reason. Plain text, one `key=value` per line.
-- The installed-OS command mounts the restore state partition by `OMARCHY_STATE` label, writes the flag, fsync, and unmounts. It may mount the restore payload read-only only long enough to verify the signed manifest before triggering.
+- The installed-OS command mounts the restore state partition by `SWARMARCHY_STATE` label, writes the flag, fsync, and unmounts. It may mount the restore payload read-only only long enough to verify the signed manifest before triggering.
 - The restore environment checks for the flag at boot. If present, it runs the reset flow non-interactively and deletes the flag on success. If absent, restore boot behaves normally (manual install/repair menu).
 - The flag must be deleted before reboot. Otherwise the machine resets itself in a loop.
 
 ### Boot Order
 
-`efibootmgr --bootnext <restore-entry>` is one-shot — it takes effect on the next boot only, then NVRAM reverts to the existing `BootOrder`. This is what we want before the destructive phase: if the reset is interrupted before restore boot, the next normal boot still tries the installed Omarchy first.
+`efibootmgr --bootnext <restore-entry>` is one-shot — it takes effect on the next boot only, then NVRAM reverts to the existing `BootOrder`. This is what we want before the destructive phase: if the reset is interrupted before restore boot, the next normal boot still tries the installed Swarmarchy first.
 
-After the restore environment accepts the trigger and before it wipes installed partitions, it must temporarily set persistent `BootOrder` to restore first, installed Omarchy second. This prevents a power loss during reinstall from leaving firmware stuck on a half-written installed ESP. On successful reinstall, the restore environment deletes the reset-in-progress marker, restores persistent `BootOrder` to installed Omarchy first and restore second, then sets `BootNext` to the installed Omarchy entry to land the user in their fresh OS.
+After the restore environment accepts the trigger and before it wipes installed partitions, it must temporarily set persistent `BootOrder` to restore first, installed Swarmarchy second. This prevents a power loss during reinstall from leaving firmware stuck on a half-written installed ESP. On successful reinstall, the restore environment deletes the reset-in-progress marker, restores persistent `BootOrder` to installed Swarmarchy first and restore second, then sets `BootNext` to the installed Swarmarchy entry to land the user in their fresh OS.
 
-If the installed OS cannot write and confirm `BootNext`, the staging command must remove any trigger it wrote and abort; a manual reinstall can still proceed through the firmware boot menu, but `omarchy-factory-reset` has not successfully prepared the machine. If the restore environment cannot set temporary restore-first `BootOrder` for an unattended reset, abort before destructive operations; manual reinstall can still proceed with an explicit warning.
+If the installed OS cannot write and confirm `BootNext`, the staging command must remove any trigger it wrote and abort; a manual reinstall can still proceed through the firmware boot menu, but `swarmarchy-factory-reset` has not successfully prepared the machine. If the restore environment cannot set temporary restore-first `BootOrder` for an unattended reset, abort before destructive operations; manual reinstall can still proceed with an explicit warning.
 
 ### Safety
 
@@ -214,8 +214,8 @@ The restore environment, when running due to the trigger flag, must still apply 
 
 ### File Changes for Factory Reset
 
-- Ship `omarchy-factory-reset` on the installed system. Source location depends on Omarchy's package boundary — either as part of the Omarchy package on the offline mirror, or copied from the live ISO into the installed system during install. Pick one consistent approach during implementation.
-- Restore state must be mountable read-write from the installed OS by an admin via `OMARCHY_STATE`. Restore payload should only be mounted read-only for manifest verification via `OMARCHY_RESTORE`.
+- Ship `swarmarchy-factory-reset` on the installed system. Source location depends on Swarmarchy's package boundary — either as part of the Swarmarchy package on the offline mirror, or copied from the live ISO into the installed system during install. Pick one consistent approach during implementation.
+- Restore state must be mountable read-write from the installed OS by an admin via `SWARMARCHY_STATE`. Restore payload should only be mounted read-only for manifest verification via `SWARMARCHY_RESTORE`.
 
 ## Safety Model
 
@@ -264,7 +264,7 @@ A torn install must be recoverable on next boot rather than leaving the disk in 
 - After LUKS format but before archinstall completes: the LUKS header exists but no working OS is installed. On the next boot from restore or ISO, offer to wipe and retry rather than attempting to resume.
 - During archinstall: same as above. Resuming partway through a torn pacstrap is more brittle than restarting it.
 
-In dual-boot mode, "wipe and retry" applies only to the writable Omarchy partition. Protected partitions must be re-verified by PARTUUID before any retry runs — power loss does not unlock protected ranges.
+In dual-boot mode, "wipe and retry" applies only to the writable Swarmarchy partition. Protected partitions must be re-verified by PARTUUID before any retry runs — power loss does not unlock protected ranges.
 
 ## Installer State Contract
 
@@ -280,7 +280,7 @@ BOOT_PARTITION=/dev/nvme0n1p1
 ROOT_PARTITION=/dev/nvme0n1p4
 PROTECTED_PARTUUIDS="1111-2222 3333-4444 5555-6666"
 WRITABLE_PARTUUIDS="7777-8888"
-PROMOTE_OMARCHY_BOOT=false
+PROMOTE_SWARMARCHY_BOOT=false
 ```
 
 Example restore state:
@@ -296,7 +296,7 @@ INSTALLED_ESP_PARTITION=/dev/nvme0n1p4
 ROOT_PARTITION=/dev/nvme0n1p5
 PROTECTED_PARTUUIDS="1111-2222 3333-4444 5555-6666"
 WRITABLE_PARTUUIDS="7777-8888 9999-aaaa"
-PROMOTE_OMARCHY_BOOT=true
+PROMOTE_SWARMARCHY_BOOT=true
 ```
 
 Keep this file simple shell, generated only by our configurator, and quote values safely.
@@ -332,7 +332,7 @@ Add shared detection and policy selection:
 - `detect_disk_layout` finds GPT state, partitions, partition ranges, filesystem labels, ESPs, ESP free space, and free regions.
 - `detect_existing_os` mounts ESP read-only and checks known vendor paths like `EFI/Microsoft`, `EFI/ubuntu`, `EFI/fedora`, `EFI/GRUB`, and `EFI/systemd`.
 - `detect_bitlocker` checks every Windows/basic-data candidate partition on the selected disk for BitLocker. Use `blkid -o value -s TYPE`; BitLocker volumes report `BitLocker` rather than `ntfs`. As a backup, read 8 bytes at offset 3 of the partition — BitLocker volumes contain `-FVE-FS-` instead of `NTFS    `. If any partition reports BitLocker, the dual-boot path aborts before any disk mutation with the message described in the dual-boot policy.
-- `detect_restore_layout` finds `OMARCHY_RESTORE` and `OMARCHY_STATE` partitions and validates the restore ESP/payload/state set.
+- `detect_restore_layout` finds `SWARMARCHY_RESTORE` and `SWARMARCHY_STATE` partitions and validates the restore ESP/payload/state set.
 - `find_free_regions` finds unallocated GPT space using `sgdisk` or `parted`. Selection rule: pick the largest single contiguous region of at least 40 GB. Do not concatenate non-contiguous regions.
 - `install_mode_form` chooses between full disk, dual boot, and restore install based on context.
 
@@ -385,8 +385,8 @@ Protected pre-install steps:
 3. Run `partprobe "$DISK"` and `udevadm settle`.
 4. Format installed ESP when policy requires it.
 5. `cryptsetup luksFormat` the root partition.
-6. `cryptsetup open` root as `omarchy_root`.
-7. `mkfs.btrfs /dev/mapper/omarchy_root`.
+6. `cryptsetup open` root as `swarmarchy_root`.
+7. `mkfs.btrfs /dev/mapper/swarmarchy_root`.
 8. Create Btrfs subvolumes `@`, `@home`, `@log`, and `@pkg`.
 9. Mount subvolumes at `$INSTALL_ROOT` with `compress=zstd`.
 10. Mount ESP at `$INSTALL_ROOT/efi`; keep `$INSTALL_ROOT/boot` as a normal directory on encrypted root.
@@ -395,17 +395,17 @@ Protected pre-install steps:
 Protected post-install steps:
 
 1. Configure root unlock for the initramfs hook actually in use. Root unlock is driven by initramfs + kernel cmdline, not by `/etc/crypttab`:
-   - `encrypt` hook: kernel cmdline `cryptdevice=UUID=<luks-uuid>:omarchy_root root=/dev/mapper/omarchy_root`. No crypttab entry needed for root.
-   - `sd-encrypt` hook: write `/etc/crypttab.initramfs` (not `/etc/crypttab`) with the LUKS UUID, and pass `rd.luks.name=<luks-uuid>=omarchy_root root=/dev/mapper/omarchy_root` on the kernel cmdline.
+   - `encrypt` hook: kernel cmdline `cryptdevice=UUID=<luks-uuid>:swarmarchy_root root=/dev/mapper/swarmarchy_root`. No crypttab entry needed for root.
+   - `sd-encrypt` hook: write `/etc/crypttab.initramfs` (not `/etc/crypttab`) with the LUKS UUID, and pass `rd.luks.name=<luks-uuid>=swarmarchy_root root=/dev/mapper/swarmarchy_root` on the kernel cmdline.
 2. Update mkinitcpio hooks for the initramfs mode actually present.
 3. Regenerate initramfs in chroot with `mkinitcpio -P`.
-4. Install an Omarchy-owned kernel/initramfs sync hook that copies boot artifacts from `/boot` to `/efi/EFI/Omarchy` after kernel or initramfs updates.
+4. Install an Swarmarchy-owned kernel/initramfs sync hook that copies boot artifacts from `/boot` to `/efi/EFI/Swarmarchy` after kernel or initramfs updates.
 5. Run the initial boot artifact sync before writing Limine config.
-6. Configure Limine kernel cmdline for encrypted root per the hook chosen above, pointing at namespaced artifacts under `EFI/Omarchy`.
+6. Configure Limine kernel cmdline for encrypted root per the hook chosen above, pointing at namespaced artifacts under `EFI/Swarmarchy`.
 7. Install or update Limine on the selected installed ESP.
 8. Run `limine-scan` in chroot when appropriate.
 9. Apply mode-specific boot order policy.
-10. Leave swapfile creation, `resume` hook, and `resume=` cmdline injection to Omarchy's existing `omarchy-hibernation-setup` post-install hook. Verify `/etc/limine-entry-tool.d/` drop-ins are honored by the Limine config layout written here so that hook works unchanged.
+10. Leave swapfile creation, `resume` hook, and `resume=` cmdline injection to Swarmarchy's existing `swarmarchy-hibernation-setup` post-install hook. Verify `/etc/limine-entry-tool.d/` drop-ins are honored by the Limine config layout written here so that hook works unchanged.
 
 ### `builder/archinstall.packages`
 
@@ -425,17 +425,17 @@ Ensure the live environment has the tools needed for protected installs:
 
 Add build-time mode support:
 
-- Persist `/root/omarchy_mode` as `normal`, `dual_boot_capable`, or `restore`.
-- For restore builds, inject `copytoram=y omarchy.mode=restore` into restore boot entries.
+- Persist `/root/swarmarchy_mode` as `normal`, `dual_boot_capable`, or `restore`.
+- For restore builds, inject `copytoram=y swarmarchy.mode=restore` into restore boot entries.
 - For restore builds, assert boot entries contain `copytoram=y`.
 - For normal ISO builds, keep existing behavior except adding dual-boot capability.
 
-### `bin/omarchy-iso-make`
+### `bin/swarmarchy-iso-make`
 
 Add optional build flags:
 
 ```text
---restore-image   build omarchy-restore.img.zst factory artifact
+--restore-image   build swarmarchy-restore.img.zst factory artifact
 ```
 
 Keep the existing ISO output path unchanged unless a restore image is explicitly requested.
@@ -444,31 +444,31 @@ Keep the existing ISO output path unchanged unless a restore image is explicitly
 
 ### Default Boot Target
 
-For any standalone install (full-disk or restore_install, with or without a restore partition set), installed Omarchy is the default boot target. The persistent `BootOrder` after every successful install or factory reset is:
+For any standalone install (full-disk or restore_install, with or without a restore partition set), installed Swarmarchy is the default boot target. The persistent `BootOrder` after every successful install or factory reset is:
 
-1. Installed Omarchy
+1. Installed Swarmarchy
 2. Restore (when a restore partition set exists)
 3. Firmware fallback
 
-The user should never have to pick Omarchy from a boot menu under normal operation. Restore is reachable but never default. Boot-menu entries inside Limine for restore/reinstall are convenience; they do not replace this NVRAM ordering.
+The user should never have to pick Swarmarchy from a boot menu under normal operation. Restore is reachable but never default. Boot-menu entries inside Limine for restore/reinstall are convenience; they do not replace this NVRAM ordering.
 
-`BootNext` is used only for one-shot transitions (factory reset trigger, post-reset return to installed Omarchy) and must not be used to make Omarchy "stickily" default — that's the job of `BootOrder`. The only temporary exception is an in-progress factory reset: after the restore environment accepts the trigger and before it mutates installed partitions, restore becomes the persistent first boot target until reinstall succeeds.
+`BootNext` is used only for one-shot transitions (factory reset trigger, post-reset return to installed Swarmarchy) and must not be used to make Swarmarchy "stickily" default — that's the job of `BootOrder`. The only temporary exception is an in-progress factory reset: after the restore environment accepts the trigger and before it mutates installed partitions, restore becomes the persistent first boot target until reinstall succeeds.
 
-For dual-boot, the previous OS's firmware order is preserved unless the user explicitly opts to make Omarchy first. Dual-boot is the only mode where Omarchy may not be the firmware default.
+For dual-boot, the previous OS's firmware order is preserved unless the user explicitly opts to make Swarmarchy first. Dual-boot is the only mode where Swarmarchy may not be the firmware default.
 
 ### Dual Boot
 
-- Install Omarchy boot files under `EFI/Omarchy` on the shared ESP.
+- Install Swarmarchy boot files under `EFI/Swarmarchy` on the shared ESP.
 - Do not overwrite existing vendor directories.
 - Preserve firmware default boot order unless user opts in.
-- Run `limine-scan` so Windows/Linux entries are discoverable from Omarchy's menu. Verify on a real Windows + Linux dual-boot before depending on this — Limine's auto-detection is less battle-tested than GRUB's. If it does not pick them up cleanly, fall back to the firmware boot menu and document the limitation rather than hand-writing entries.
+- Run `limine-scan` so Windows/Linux entries are discoverable from Swarmarchy's menu. Verify on a real Windows + Linux dual-boot before depending on this — Limine's auto-detection is less battle-tested than GRUB's. If it does not pick them up cleanly, fall back to the firmware boot menu and document the limitation rather than hand-writing entries.
 - BitLocker is handled at detection time by aborting the install (see Dual Boot policy). The bootloader path therefore only ever sees Windows volumes with BitLocker fully off/decrypted.
 
 ### Restore Install
 
-- Installed Omarchy gets its own ESP and boot entry.
+- Installed Swarmarchy gets its own ESP and boot entry.
 - Restore ESP keeps `EFI/BOOT/BOOTX64.EFI` fallback path.
-- After successful install, write `BootOrder` as installed Omarchy first, restore second. Do not reorder on every boot — only after install or factory reset.
+- After successful install, write `BootOrder` as installed Swarmarchy first, restore second. Do not reorder on every boot — only after install or factory reset.
 - Add a restore/reinstall entry to the installed Limine menu if it can be done cleanly.
 - If NVRAM writes fail, rely on fallback boot paths and show a warning. The user can still recover via firmware boot menu.
 
@@ -496,7 +496,7 @@ Single-purpose spike on a throwaway VM. No production code changes.
 - Add `pre_mounted_config` generation.
 - Add manual LUKS, Btrfs, subvolume, mount, fstab, and cleanup logic.
 - Add encrypted boot post-install configuration.
-- Add namespaced ESP boot artifact sync under `EFI/Omarchy`.
+- Add namespaced ESP boot artifact sync under `EFI/Swarmarchy`.
 - Keep it behind internal mode switches until validated.
 
 ### Phase 3: Dual-Boot UI and Policy
@@ -516,16 +516,16 @@ Single-purpose spike on a throwaway VM. No production code changes.
 
 ### Phase 5: Restore Factory Image
 
-- Build `omarchy-restore.img.zst`.
+- Build `swarmarchy-restore.img.zst`.
 - Add factory flashing instructions or a dedicated factory flasher ISO/PXE workflow.
 - Validate first boot from internal disk with no external media.
-- Sign `omarchy-restore.img.zst` and the restore payload manifest. Verify in the factory flasher and at restore boot before any disk mutation.
+- Sign `swarmarchy-restore.img.zst` and the restore payload manifest. Verify in the factory flasher and at restore boot before any disk mutation.
 - Add first-boot UUID randomization for cloned restore images before generating installed boot entries or state.
 - Decide on Secure Boot before this phase ships. Shipping with SB disabled is a non-starter for some buyers, and BitLocker (when present on a dual-boot machine restored later) reseals against firmware state. Either implement a signed shim/Limine path, or commit to "SB off" with a documented rationale and a way for the user to flip it on later if they have keys.
 
 ### Phase 6: Factory Reset
 
-- Implement `omarchy-factory-reset` as the installed-OS staging command: write and fsync the trigger flag, verify/recreate the restore boot entry, set and confirm `BootNext`, then leave the machine ready to boot restore.
+- Implement `swarmarchy-factory-reset` as the installed-OS staging command: write and fsync the trigger flag, verify/recreate the restore boot entry, set and confirm `BootNext`, then leave the machine ready to boot restore.
 - Wire the restore environment to detect the trigger flag and run the reinstall flow non-interactively.
 - Set `BootNext` for one-shot transitions and temporary restore-first persistent `BootOrder` during the destructive reset window.
 - Validate on `restore_install` machines first (the flow already has a restore partition set).
@@ -541,22 +541,22 @@ Single-purpose spike on a throwaway VM. No production code changes.
 
 - Full-disk install behavior remains unchanged through Phase 6. Phase 7 changes the default layout to include a restore partition set; legacy layout remains available via `--no-restore`.
 - Dual-boot install preserves existing OS partitions.
-- Dual-boot install creates encrypted Omarchy root in free space.
+- Dual-boot install creates encrypted Swarmarchy root in free space.
 - When another install is detected, the installer offers the current exclusive full-disk wipe path and only offers dual boot when guardrails pass.
-- Dual-boot install writes Omarchy boot artifacts only under `EFI/Omarchy` on a shared ESP and leaves existing vendor paths untouched.
+- Dual-boot install writes Swarmarchy boot artifacts only under `EFI/Swarmarchy` on a shared ESP and leaves existing vendor paths untouched.
 - Dual-boot install aborts cleanly when BitLocker/FVE is detected, including suspended BitLocker, before any disk mutation, with an actionable message.
 - Restore install preserves restore ESP, restore payload, and restore state partitions.
-- Restore install creates or recreates only installed Omarchy partitions.
+- Restore install creates or recreates only installed Swarmarchy partitions.
 - Protected modes never generate archinstall config with `wipe: true`.
 - Protected modes prevent archinstall from independently writing boot files or NVRAM entries.
 - Protected modes abort before destructive operations if a target partition is protected.
 - Restore payload integrity is verified with a signed manifest before any restore-triggered disk mutation.
-- Installed Omarchy boots and requires LUKS unlock.
-- Installed Omarchy is the default firmware boot target for any standalone install (full-disk or restore_install).
+- Installed Swarmarchy boots and requires LUKS unlock.
+- Installed Swarmarchy is the default firmware boot target for any standalone install (full-disk or restore_install).
 - Restore boot remains available after first install but is never the default.
 - Reinstall from restore works without external media.
-- `omarchy-factory-reset` from the installed OS leaves the machine staged exactly like a freshly prepared restore-boot device: trigger flag durable on restore state, restore boot entry present, and `BootNext` pointing at restore. No installed partitions are destroyed before the next restore boot.
-- A subsequent restore boot from that staged state wipes installed partitions, reinstalls a fresh Omarchy, and lands the user back in the installed OS without external media. Restore ESP, payload, and state partitions survive intact.
+- `swarmarchy-factory-reset` from the installed OS leaves the machine staged exactly like a freshly prepared restore-boot device: trigger flag durable on restore state, restore boot entry present, and `BootNext` pointing at restore. No installed partitions are destroyed before the next restore boot.
+- A subsequent restore boot from that staged state wipes installed partitions, reinstalls a fresh Swarmarchy, and lands the user back in the installed OS without external media. Restore ESP, payload, and state partitions survive intact.
 - Factory reset refuses to run when no complete restore partition set is present (e.g. dual-boot, `--no-restore` install).
 
 ## Validation Matrix
@@ -587,20 +587,20 @@ Single-purpose spike on a throwaway VM. No production code changes.
 3. First install randomizes cloned disk/partition/filesystem UUIDs before creating installed boot entries.
 4. First install creates installed ESP/root and preserves restore ESP, payload, and state.
 5. Installed OS boots with encrypted root.
-6. Installed Omarchy is the firmware default; restore is reachable but not default.
+6. Installed Swarmarchy is the firmware default; restore is reachable but not default.
 7. Restore boot still works after installed OS exists.
-8. Reinstall formats only the installed Omarchy partitions in place; PARTUUIDs unchanged.
+8. Reinstall formats only the installed Swarmarchy partitions in place; PARTUUIDs unchanged.
 9. Restore mode without `copytoram=y` aborts before disk mutation.
 10. Missing restore payload or restore state aborts before disk mutation.
 11. NVRAM boot entry write failure still leaves fallback boot path usable.
 
 ### Factory Reset
 
-1. `omarchy-factory-reset` from installed OS leaves the system staged for restore boot: trigger flag durable on restore state, restore boot entry present, and `BootNext` confirmed.
+1. `swarmarchy-factory-reset` from installed OS leaves the system staged for restore boot: trigger flag durable on restore state, restore boot entry present, and `BootNext` confirmed.
 2. No installed partitions are destroyed before the staged system actually boots into restore.
-3. Booting into restore from the staged state reinstalls and returns to a fresh installed Omarchy as the default-booted OS.
+3. Booting into restore from the staged state reinstalls and returns to a fresh installed Swarmarchy as the default-booted OS.
 4. Trigger flag is deleted before the post-reset reboot. Machine does not loop.
-5. Reset interrupted between trigger and restore boot: next normal boot still goes to installed Omarchy (because `BootNext` is one-shot).
+5. Reset interrupted between trigger and restore boot: next normal boot still goes to installed Swarmarchy (because `BootNext` is one-shot).
 6. Reset interrupted during reinstall (power loss): persistent temporary restore-first `BootOrder` boots restore again and re-runs the flow from the trigger flag/reset-in-progress state.
 7. Reset refused when no complete restore partition set is detected.
 8. Reset refused when signed restore payload verification fails.
@@ -627,17 +627,17 @@ Single-purpose spike on a throwaway VM. No production code changes.
 
 Resolved:
 
-- User-facing reset staging command: yes, `omarchy-factory-reset` (Phase 6).
+- User-facing reset staging command: yes, `swarmarchy-factory-reset` (Phase 6).
 - Secure Boot: promoted to Phase 5 decision gate.
-- Btrfs subvolume layout: protected modes use the current full-disk layout, `@`, `@home`, `@log`, and `@pkg`. The `/swap` subvolume for hibernation is created post-install by `omarchy-hibernation-setup` and is not predeclared at install time.
+- Btrfs subvolume layout: protected modes use the current full-disk layout, `@`, `@home`, `@log`, and `@pkg`. The `/swap` subvolume for hibernation is created post-install by `swarmarchy-hibernation-setup` and is not predeclared at install time.
 
 ## Definition of Done
 
 - One shared protected-partition implementation supports both dual-boot and restore install policies.
 - Full-disk installs remain stable through Phase 6 and gain a default restore partition set in Phase 7.
 - Dual-boot users can install alongside existing OSes without data loss.
-- OEM devices can boot internal restore on first power-on, install Omarchy, and retain restore for future reinstall.
+- OEM devices can boot internal restore on first power-on, install Swarmarchy, and retain restore for future reinstall.
 - All destructive operations are guarded by protected partition checks.
-- Installed Omarchy is the firmware default boot target on every standalone install.
-- `omarchy-factory-reset` stages any standalone install to boot internal restore without external media; the restore-triggered reinstall returns the user to a fresh installed Omarchy.
+- Installed Swarmarchy is the firmware default boot target on every standalone install.
+- `swarmarchy-factory-reset` stages any standalone install to boot internal restore without external media; the restore-triggered reinstall returns the user to a fresh installed Swarmarchy.
 - VM and hardware validation matrices pass.

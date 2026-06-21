@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-use_omarchy_helpers() {
-  export OMARCHY_PATH="/root/omarchy"
-  export OMARCHY_INSTALL="/root/omarchy/install"
-  export OMARCHY_INSTALL_LOG_FILE="/var/log/omarchy-install.log"
-  export OMARCHY_MIRROR="$(cat /root/omarchy_mirror)"
-  source /root/omarchy/install/helpers/all.sh
+use_swarmarchy_helpers() {
+  export SWARMARCHY_PATH="/root/swarmarchy"
+  export SWARMARCHY_INSTALL="/root/swarmarchy/install"
+  export SWARMARCHY_INSTALL_LOG_FILE="/var/log/swarmarchy-install.log"
+  export SWARMARCHY_MIRROR="$(cat /root/swarmarchy_mirror)"
+  source /root/swarmarchy/install/helpers/all.sh
 }
 
 run_configurator() {
   set_tokyo_night_colors
   ./configurator
-  export OMARCHY_USER="$(jq -r '.users[0].username' user_credentials.json)"
+  export SWARMARCHY_USER="$(jq -r '.users[0].username' user_credentials.json)"
 }
 
 install_arch() {
@@ -20,25 +20,25 @@ install_arch() {
   gum style --foreground 3 --padding "1 0 0 $PADDING_LEFT" "Installing..."
   echo
 
-  touch /var/log/omarchy-install.log
+  touch /var/log/swarmarchy-install.log
 
   start_log_output
 
   # Set CURRENT_SCRIPT for the trap to display better when nothing is returned for some reason
   CURRENT_SCRIPT="install_base_system"
-  install_base_system > >(sed -u 's/\x1b\[[0-9;]*[a-zA-Z]//g' >>/var/log/omarchy-install.log) 2>&1
+  install_base_system > >(sed -u 's/\x1b\[[0-9;]*[a-zA-Z]//g' >>/var/log/swarmarchy-install.log) 2>&1
   unset CURRENT_SCRIPT
   stop_log_output
 }
 
-install_omarchy() {
+install_swarmarchy() {
   chroot_bash -lc "sudo pacman -S --noconfirm --needed gum" >/dev/null
-  chroot_bash -lc "source /home/$OMARCHY_USER/.local/share/omarchy/install.sh || bash"
+  chroot_bash -lc "source /home/$SWARMARCHY_USER/.local/share/swarmarchy/install.sh || bash"
 
   configure_login_for_unencrypted_install
 
   # Reboot if requested by installer
-  if [[ -f /mnt/var/tmp/omarchy-install-completed ]]; then
+  if [[ -f /mnt/var/tmp/swarmarchy-install-completed ]]; then
     reboot
   fi
 }
@@ -129,7 +129,7 @@ install_base_system() {
   # Initialize and populate the keyring
   pacman-key --init
   pacman-key --populate archlinux
-  pacman-key --populate omarchy
+  pacman-key --populate swarmarchy
 
   # Sync the offline database so pacman can find packages
   pacman -Sy --noconfirm
@@ -164,32 +164,32 @@ install_base_system() {
   cp /etc/pacman.conf /mnt/etc/pacman.conf
 
   # Mount the offline mirror so it's accessible in the chroot
-  mkdir -p /mnt/var/cache/omarchy/mirror/offline
-  mount --bind /var/cache/omarchy/mirror/offline /mnt/var/cache/omarchy/mirror/offline
+  mkdir -p /mnt/var/cache/swarmarchy/mirror/offline
+  mount --bind /var/cache/swarmarchy/mirror/offline /mnt/var/cache/swarmarchy/mirror/offline
 
   # Mount the packages dir so it's accessible in the chroot
   mkdir -p /mnt/opt/packages
   mount --bind /opt/packages /mnt/opt/packages
 
-  # No need to ask for sudo during the installation (omarchy itself responsible for removing after install)
+  # No need to ask for sudo during the installation (swarmarchy itself responsible for removing after install)
   mkdir -p /mnt/etc/sudoers.d
-  cat >/mnt/etc/sudoers.d/99-omarchy-installer <<EOF
+  cat >/mnt/etc/sudoers.d/99-swarmarchy-installer <<EOF
 root ALL=(ALL:ALL) NOPASSWD: ALL
 %wheel ALL=(ALL:ALL) NOPASSWD: ALL
-$OMARCHY_USER ALL=(ALL:ALL) NOPASSWD: ALL
+$SWARMARCHY_USER ALL=(ALL:ALL) NOPASSWD: ALL
 EOF
-  chmod 440 /mnt/etc/sudoers.d/99-omarchy-installer
+  chmod 440 /mnt/etc/sudoers.d/99-swarmarchy-installer
 
-  # Copy the local omarchy repo to the user's home directory
-  mkdir -p /mnt/home/$OMARCHY_USER/.local/share/
-  cp -r /root/omarchy /mnt/home/$OMARCHY_USER/.local/share/
+  # Copy the local swarmarchy repo to the user's home directory
+  mkdir -p /mnt/home/$SWARMARCHY_USER/.local/share/
+  cp -r /root/swarmarchy /mnt/home/$SWARMARCHY_USER/.local/share/
 
-  chown -R 1000:1000 /mnt/home/$OMARCHY_USER/.local/
+  chown -R 1000:1000 /mnt/home/$SWARMARCHY_USER/.local/
 
   # Ensure all necessary scripts are executable
-  find /mnt/home/$OMARCHY_USER/.local/share/omarchy -type f -path "*/bin/*" -exec chmod +x {} \;
-  chmod +x /mnt/home/$OMARCHY_USER/.local/share/omarchy/boot.sh 2>/dev/null || true
-  find /mnt/home/$OMARCHY_USER/.local/share/omarchy/default/waybar -type f -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
+  find /mnt/home/$SWARMARCHY_USER/.local/share/swarmarchy -type f -path "*/bin/*" -exec chmod +x {} \;
+  chmod +x /mnt/home/$SWARMARCHY_USER/.local/share/swarmarchy/boot.sh 2>/dev/null || true
+  find /mnt/home/$SWARMARCHY_USER/.local/share/swarmarchy/default/waybar -type f -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
 }
 
 configure_login_for_unencrypted_install() {
@@ -198,16 +198,16 @@ configure_login_for_unencrypted_install() {
   fi
 
   # Unencrypted installs must stop at SDDM so the user password is entered
-  # before reaching the desktop. Omarchy's normal encrypted path may autologin
+  # before reaching the desktop. Swarmarchy's normal encrypted path may autologin
   # because the disk password was already entered at boot.
   #
-  # Keep the Omarchy SDDM theme and seed SDDM's last user/session state so
-  # first boot looks like the SDDM screen shown after logging out of Omarchy.
+  # Keep the Swarmarchy SDDM theme and seed SDDM's last user/session state so
+  # first boot looks like the SDDM screen shown after logging out of Swarmarchy.
   mkdir -p /mnt/etc/sddm.conf.d
   rm -f /mnt/etc/sddm.conf.d/autologin.conf
-  cat >/mnt/etc/sddm.conf.d/99-omarchy-login.conf <<EOF
+  cat >/mnt/etc/sddm.conf.d/99-swarmarchy-login.conf <<EOF
 [Theme]
-Current=omarchy
+Current=swarmarchy
 
 [Users]
 RememberLastUser=true
@@ -217,8 +217,8 @@ EOF
   mkdir -p /mnt/var/lib/sddm
   cat >/mnt/var/lib/sddm/state.conf <<EOF
 [Last]
-Session=omarchy.desktop
-User=$OMARCHY_USER
+Session=swarmarchy.desktop
+User=$SWARMARCHY_USER
 EOF
 
   rm -f /mnt/etc/systemd/system/getty@tty1.service.d/autologin.conf
@@ -227,20 +227,20 @@ EOF
 }
 
 chroot_bash() {
-  HOME=/home/$OMARCHY_USER \
-    arch-chroot -u $OMARCHY_USER /mnt/ \
-    env OMARCHY_CHROOT_INSTALL=1 \
-    OMARCHY_USER_NAME="$(<user_full_name.txt)" \
-    OMARCHY_USER_EMAIL="$(<user_email_address.txt)" \
-    OMARCHY_MIRROR="$OMARCHY_MIRROR" \
-    USER="$OMARCHY_USER" \
-    HOME="/home/$OMARCHY_USER" \
+  HOME=/home/$SWARMARCHY_USER \
+    arch-chroot -u $SWARMARCHY_USER /mnt/ \
+    env SWARMARCHY_CHROOT_INSTALL=1 \
+    SWARMARCHY_USER_NAME="$(<user_full_name.txt)" \
+    SWARMARCHY_USER_EMAIL="$(<user_email_address.txt)" \
+    SWARMARCHY_MIRROR="$SWARMARCHY_MIRROR" \
+    USER="$SWARMARCHY_USER" \
+    HOME="/home/$SWARMARCHY_USER" \
     /bin/bash "$@"
 }
 
 if [[ $(tty) == "/dev/tty1" ]]; then
-  use_omarchy_helpers
+  use_swarmarchy_helpers
   run_configurator
   install_arch
-  install_omarchy
+  install_swarmarchy
 fi

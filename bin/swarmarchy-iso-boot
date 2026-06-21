@@ -13,14 +13,14 @@ if [ $# -eq 0 ]; then
 fi
 
 if [ -z "$ISO" ]; then
-  echo "Usage: omarchy-iso-boot [release/omarchy.iso] [reuse]"
+  echo "Usage: swarmarchy-iso-boot [release/swarmarchy.iso] [reuse]"
   echo "  SSH available at: ssh -p 2222 root@localhost (after installing openssh)"
   exit 1
 fi
 
-omarchy-pkg-add qemu-full edk2-ovmf
+swarmarchy-pkg-add qemu-full edk2-ovmf
 
-DISK="/tmp/omarchy-iso-boot.qcow2"
+DISK="/tmp/swarmarchy-iso-boot.qcow2"
 if [[ ! -f $DISK || $REUSE != "reuse" ]]; then
   qemu-img create -f qcow2 "$DISK" 40G
   cp /usr/share/edk2/x64/OVMF_VARS.4m.fd /tmp/OVMF_VARS.4m.fd

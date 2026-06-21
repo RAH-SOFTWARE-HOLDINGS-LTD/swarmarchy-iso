@@ -17,17 +17,17 @@ while [[ $# -gt 0 ]]; do
     ;;
   --local-source)
     LOCAL_SOURCE=1
-    OMARCHY_MIRROR=edge
+    SWARMARCHY_MIRROR=edge
     shift
     ;;
   --dev)
-    OMARCHY_INSTALLER_REF=dev
-    OMARCHY_MIRROR=edge
+    SWARMARCHY_INSTALLER_REF=dev
+    SWARMARCHY_MIRROR=edge
     shift
     ;;
   --rc)
-    OMARCHY_MIRROR=rc
-    OMARCHY_INSTALLER_REF=rc
+    SWARMARCHY_MIRROR=rc
+    SWARMARCHY_INSTALLER_REF=rc
     shift
     ;;
   *)
@@ -50,16 +50,16 @@ BUILD_ROOT=$(realpath "${BASH_SOURCE[0]%/*}/..")
 BUILD_RELEASE_PATH="$BUILD_ROOT/release"
 mkdir -p "$BUILD_RELEASE_PATH"
 
-OMARCHY_INSTALLER_REPO="${OMARCHY_INSTALLER_REPO:-RAH-SOFTWARE-HOLDINGS-LTD/swarmarchy}"
-OMARCHY_INSTALLER_REF="${OMARCHY_INSTALLER_REF:-master}"
-OMARCHY_MIRROR="${OMARCHY_MIRROR:-stable}"
+SWARMARCHY_INSTALLER_REPO="${SWARMARCHY_INSTALLER_REPO:-RAH-SOFTWARE-HOLDINGS-LTD/swarmarchy}"
+SWARMARCHY_INSTALLER_REF="${SWARMARCHY_INSTALLER_REF:-master}"
+SWARMARCHY_MIRROR="${SWARMARCHY_MIRROR:-stable}"
 
 DOCKER_ARGS=(
   --rm
   --privileged
-  -e "OMARCHY_INSTALLER_REPO=$OMARCHY_INSTALLER_REPO"
-  -e "OMARCHY_INSTALLER_REF=$OMARCHY_INSTALLER_REF"
-  -e "OMARCHY_MIRROR=$OMARCHY_MIRROR"
+  -e "SWARMARCHY_INSTALLER_REPO=$SWARMARCHY_INSTALLER_REPO"
+  -e "SWARMARCHY_INSTALLER_REF=$SWARMARCHY_INSTALLER_REF"
+  -e "SWARMARCHY_MIRROR=$SWARMARCHY_MIRROR"
   -e "HOST_UID=$(id -u)"
   -e "HOST_GID=$(id -g)"
   -v "$BUILD_RELEASE_PATH/:/out/"
@@ -69,9 +69,9 @@ DOCKER_ARGS=(
   -v "$BUILD_ROOT/configs:/configs:ro"
 )
 
-# Use local source of Omarchy from $OMARCHY_PATH instead of git checkout
+# Use local source of Swarmarchy from $SWARMARCHY_PATH instead of git checkout
 if [[ -n "${LOCAL_SOURCE-}" ]]; then
-  DOCKER_ARGS+=(-v "$OMARCHY_PATH:/omarchy:ro")
+  DOCKER_ARGS+=(-v "$SWARMARCHY_PATH:/swarmarchy:ro")
 fi
 
 # Use local pacman cache if you already have one on host to speed up repeat runs
@@ -83,10 +83,10 @@ fi
 if [[ -z "$NO_CACHE" ]]; then
   # using a dated dir on the host to refresh daily if building multiple times
   BUILD_DATE=$(date +%Y-%m-%d)
-  OFFLINE_REPO_BUILD_CACHE_DIR="$HOME/.cache/omarchy/iso_${BUILD_DATE}/airootfs/var/cache/omarchy"
+  OFFLINE_REPO_BUILD_CACHE_DIR="$HOME/.cache/swarmarchy/iso_${BUILD_DATE}/airootfs/var/cache/swarmarchy"
   mkdir -p "$OFFLINE_REPO_BUILD_CACHE_DIR"
-  # Mount to /var/cache/airootfs/var/cache/omarchy since that's where repo packages go in the ISO
-  DOCKER_ARGS+=(-v "$OFFLINE_REPO_BUILD_CACHE_DIR:/var/cache/airootfs/var/cache/omarchy")
+  # Mount to /var/cache/airootfs/var/cache/swarmarchy since that's where repo packages go in the ISO
+  DOCKER_ARGS+=(-v "$OFFLINE_REPO_BUILD_CACHE_DIR:/var/cache/airootfs/var/cache/swarmarchy")
 fi
 
 # Run the builder with assembled args
@@ -94,11 +94,11 @@ docker run "${DOCKER_ARGS[@]}" archlinux/archlinux:latest /$BUILD_SCRIPT
 
 # Move as install ref
 latest_iso=$(\ls -t "$BUILD_RELEASE_PATH"/*.iso | head -n1)
-iso_ref="${latest_iso%.*}-$OMARCHY_INSTALLER_REF.iso"
+iso_ref="${latest_iso%.*}-$SWARMARCHY_INSTALLER_REF.iso"
 mv -f "$latest_iso" "$iso_ref"
 
 # Offer to boot the new build
 if [[ -z "$NO_BOOT_OFFER" ]]; then
   echo
-  gum confirm "Boot $iso_ref?" && omarchy-iso-boot "$iso_ref"
+  gum confirm "Boot $iso_ref?" && swarmarchy-iso-boot "$iso_ref"
 fi

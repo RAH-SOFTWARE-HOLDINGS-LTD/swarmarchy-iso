@@ -2,7 +2,7 @@
 
 ## Goal
 
-Create a second ISO flavor for OEM preloading that is installed to internal storage at factory time, then boots into customer setup on first power-on (no external media required), and ends in a fully encrypted Omarchy install.
+Create a second ISO flavor for OEM preloading that is installed to internal storage at factory time, then boots into customer setup on first power-on (no external media required), and ends in a fully encrypted Swarmarchy install.
 
 ## Product Requirements
 
@@ -43,24 +43,24 @@ Create a second ISO flavor for OEM preloading that is installed to internal stor
 ## 1) Add OEM build mode
 
 ### Files
-- `bin/omarchy-iso-make`
+- `bin/swarmarchy-iso-make`
 - `builder/build-iso.sh`
 
 ### Changes
-- Add CLI flag `--oem` to `bin/omarchy-iso-make`.
-- Pass `OMARCHY_MODE=oem` into Docker build env (default `normal`).
-- In `builder/build-iso.sh`, write mode marker `/root/omarchy_mode` containing `oem` or `normal` (same pattern as `omarchy_mirror`).
+- Add CLI flag `--oem` to `bin/swarmarchy-iso-make`.
+- Pass `SWARMARCHY_MODE=oem` into Docker build env (default `normal`).
+- In `builder/build-iso.sh`, write mode marker `/root/swarmarchy_mode` containing `oem` or `normal` (same pattern as `swarmarchy_mirror`).
 - Keep OEM on current boot stack (`uefi.grub` + `bios.syslinux`); do not add or depend on systemd-boot paths.
-- When `OMARCHY_MODE=oem`, inject `copytoram=y` into all shipped OEM boot entry points before `mkarchiso` runs:
+- When `SWARMARCHY_MODE=oem`, inject `copytoram=y` into all shipped OEM boot entry points before `mkarchiso` runs:
   - `grub/grub.cfg`: append to `linux` cmdline entries.
   - `grub/loopback.cfg`: append to `linux` cmdline entries.
   - `syslinux/archiso_sys-linux.cfg`: append to `APPEND` lines.
-- When `OMARCHY_MODE=oem`, remove accessibility/speakup boot entries:
+- When `SWARMARCHY_MODE=oem`, remove accessibility/speakup boot entries:
   - `grub/grub.cfg`: remove `archlinux-accessibility` menuentry.
   - `grub/loopback.cfg`: remove `archlinux-accessibility` menuentry.
   - `syslinux/archiso_sys-linux.cfg`: remove `arch64speech` label block.
-- When `OMARCHY_MODE=oem`, override `iso_application` in `profiledef.sh` to `"Omarchy OEM Installer"`.
-- Rename output ISO with `-oem` suffix (in addition to existing `-$OMARCHY_INSTALLER_REF` suffix).
+- When `SWARMARCHY_MODE=oem`, override `iso_application` in `profiledef.sh` to `"Swarmarchy OEM Installer"`.
+- Rename output ISO with `-oem` suffix (in addition to existing `-$SWARMARCHY_INSTALLER_REF` suffix).
 
 ### Hardening
 - Add post-injection build assertion that fails build if any expected boot config does not contain `copytoram=y`.
@@ -68,7 +68,7 @@ Create a second ISO flavor for OEM preloading that is installed to internal stor
 - Make injection idempotent (do not duplicate `copytoram=y` if already present).
 
 ### Acceptance criteria
-- `./bin/omarchy-iso-make --oem` builds successfully.
+- `./bin/swarmarchy-iso-make --oem` builds successfully.
 - OEM ISO boot entries contain `copytoram=y` in all supported boot paths.
 - OEM ISO does not expose accessibility/speakup boot entries.
 - Normal build output and behavior remain unchanged.
@@ -91,7 +91,7 @@ OEM image boots from internal disk and later wipes that same disk. Live environm
 - `configs/airootfs/root/.automated_script.sh`
 
 ### Changes
-- Before `run_configurator`, if `/root/omarchy_mode` is `oem`:
+- Before `run_configurator`, if `/root/swarmarchy_mode` is `oem`:
   - Verify `/proc/cmdline` contains `copytoram=y`; abort with clear actionable error if missing.
   - Verify factory hardware minimum using `MemTotal`:
     - Require `MemTotal >= 8 GiB`.
@@ -125,7 +125,7 @@ OEM mode still needs an unmistakable warning before destructive install proceeds
 - `configs/airootfs/root/configurator`
 
 ### Changes
-- Read mode from `/root/omarchy_mode`.
+- Read mode from `/root/swarmarchy_mode`.
 - If mode is `oem`, add OEM-specific warning text before existing destructive confirmation.
 - Upgrade confirmation in OEM mode to explicit typed confirmation (for example: `YES, WIPE DISK`) while preserving existing normal-mode flow.
 

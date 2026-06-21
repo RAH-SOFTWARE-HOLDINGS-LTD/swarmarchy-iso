@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Rely on Omarchy for styling and error handling
-source "$OMARCHY_INSTALL/helpers/all.sh"
+# Rely on Swarmarchy for styling and error handling
+source "$SWARMARCHY_INSTALL/helpers/all.sh"
 
 # Ensure tzupdate is available for guessing timezone
 command -v tzupdate >/dev/null || sudo pacman -Sy --noconfirm tzupdate
@@ -128,12 +128,12 @@ user_form() {
   email_address=$(gum input --placeholder "Used for git authentication (hit return to skip)" --prompt.foreground="#845DF9" --prompt "Email address> ")
 
   while true; do
-    hostname=$(gum input --placeholder "Letters, digits, and dashes (or return for 'omarchy')" --prompt.foreground="#845DF9" --prompt "Hostname> ")
+    hostname=$(gum input --placeholder "Letters, digits, and dashes (or return for 'swarmarchy')" --prompt.foreground="#845DF9" --prompt "Hostname> ")
 
     if [[ "$hostname" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]]; then
       break
     elif [[ -z $hostname ]]; then
-      hostname="omarchy"
+      hostname="swarmarchy"
       break
     else
       notice "Hostname must be 1-63 letters, digits, or dashes, and cannot start or end with a dash" 1
@@ -235,7 +235,7 @@ get_root_disk() {
 }
 
 disk_form() {
-  step "Let's select where to install Omarchy..."
+  step "Let's select where to install Swarmarchy..."
 
   # Don't offer the install media as an option (Arch ISO mounts it here)
   local boot_source
@@ -312,7 +312,7 @@ done
 clear
 
 # Save user full name and email address, so the autostart can
-# set them as OMARCHY_USER_NAME and OMARCHY_USER_EMAIL
+# set them as SWARMARCHY_USER_NAME and SWARMARCHY_USER_EMAIL
 echo "$full_name" >user_full_name.txt
 echo "$email_address" >user_email_address.txt
 

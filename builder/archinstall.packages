@@ -15,4 +15,4 @@ snapper            # set up Btrfs snapshots at install time
 # Removed for aarch64:
 #   amd-ucode, intel-ucode  -> x86 CPU microcode (n/a on ARM)
 #   sof-firmware            -> Intel audio DSP firmware (n/a)
-# TODO(aarch64): omarchy-keyring is x86-only; restore once an aarch64 omarchy repo exists.
+# TODO(aarch64): omarchy-keyring is x86-only; restore once an aarch64 swarmarchy repo exists.

@@ -1,29 +1,29 @@
-# Plan: aarch64 (Generic UEFI ARM64) build for omarchy-iso
+# Plan: aarch64 (Generic UEFI ARM64) build for swarmarchy-iso
 
 ## Context
 
-omarchy-iso currently produces a single x86_64 Arch Linux live ISO. The build is x86-baked from top to bottom — profile arch, package list filename, microcode, kernel choice (`linux-t2`), bootloader configs (BIOS syslinux + UEFI GRUB), squashfs BCJ filter, Node.js download URL, QEMU smoke-test, release filename, and CI runner.
+swarmarchy-iso currently produces a single x86_64 Arch Linux live ISO. The build is x86-baked from top to bottom — profile arch, package list filename, microcode, kernel choice (`linux-t2`), bootloader configs (BIOS syslinux + UEFI GRUB), squashfs BCJ filter, Node.js download URL, QEMU smoke-test, release filename, and CI runner.
 
 Target: a parallel **generic UEFI aarch64** ISO — boots on Ampere servers, AWS Graviton VMs, Snapdragon X laptops, ARM dev kits. Anything that exposes vanilla UEFI + ACPI. Apple Silicon (Asahi) and SBCs (U-Boot/rpi-firmware) are out of scope.
 
-**Assumption:** cross-repo dependencies are someone else's problem to land first. This plan only covers omarchy-iso. The hard prerequisites are listed up front so it's clear what blocks the first green build.
+**Assumption:** cross-repo dependencies are someone else's problem to land first. This plan only covers swarmarchy-iso. The hard prerequisites are listed up front so it's clear what blocks the first green build.
 
 ---
 
 ## Hard prerequisites (NOT in this plan, but block any green build)
 
-These exist outside omarchy-iso. Flagged for visibility — without them, nothing here boots:
+These exist outside swarmarchy-iso. Flagged for visibility — without them, nothing here boots:
 
 1. **aarch64 base packages must exist somewhere we can pacman from.** Vanilla Arch (`geo.mirror.pkgbuild.com`) is x86_64-only — there is no `core/os/aarch64`. The realistic source is **Arch Linux ARM** (`mirror.archlinuxarm.org`) for `core`/`extra`/`alarm`/`aur`. Decision required: target Arch Linux ARM as the aarch64 base distribution.
-2. **`pkgs.omarchy.org/{stable,edge}/aarch64/`** must serve a real repo. Probed today, both return 404. omarchy-pkgs already has multi-arch build support per its README, so this is a publish step, not a port.
-3. **Omarchy installer guard** at `~/.local/share/omarchy/install/preflight/guard.sh:25` hard-aborts on `uname -m != x86_64`. Must be relaxed to allow aarch64 (or scoped behind a flag).
+2. **`pkgs.omarchy.org/{stable,edge}/aarch64/`** must serve a real repo. Probed today, both return 404. swarmarchy-pkgs already has multi-arch build support per its README, so this is a publish step, not a port.
+3. **Swarmarchy installer guard** at `~/.local/share/swarmarchy/install/preflight/guard.sh:25` hard-aborts on `uname -m != x86_64`. Must be relaxed to allow aarch64 (or scoped behind a flag).
 4. **archinstall + Limine** must work end-to-end on aarch64. archinstall supports it; Limine supports aarch64 UEFI. Worth a manual verification before committing to this bootloader path on ARM.
 
 ---
 
 ## Approach
 
-Add an `--arch aarch64` flag to `bin/omarchy-iso-make`. Branch on it everywhere x86_64 is currently assumed. Don't fork the profile directory — overlay arch-specific files at build time so the two architectures share one source of truth.
+Add an `--arch aarch64` flag to `bin/swarmarchy-iso-make`. Branch on it everywhere x86_64 is currently assumed. Don't fork the profile directory — overlay arch-specific files at build time so the two architectures share one source of truth.
 
 Output artifact naming already uses no arch suffix until release-time renaming, so two parallel builds coexist cleanly.
 
@@ -31,10 +31,10 @@ Output artifact naming already uses no arch suffix until release-time renaming, 
 
 ## Concrete changes
 
-### 1. Build entrypoint — `bin/omarchy-iso-make`
+### 1. Build entrypoint — `bin/swarmarchy-iso-make`
 
 - Add `--arch x86_64|aarch64` flag (default `x86_64` for backward compat).
-- Pass `OMARCHY_ARCH` env var into the container.
+- Pass `SWARMARCHY_ARCH` env var into the container.
 - Switch the docker image / platform per arch:
   - x86_64: `archlinux/archlinux:latest` (unchanged)
   - aarch64: `archlinuxarm/archlinuxarm:latest` (or `menci/archlinuxarm` — pick whichever publishes a recent multi-arch image), with `--platform linux/arm64`. Native arm64 host preferred; QEMU emulation works but is slow.
@@ -44,24 +44,24 @@ Output artifact naming already uses no arch suffix until release-time renaming, 
 
 Change `arch` and the squashfs BCJ filter at runtime. Either:
 - Keep one `profiledef.sh` and have `builder/build-iso.sh` `sed` the arch line + BCJ filter (`x86` → `arm`) before `mkarchiso` runs, **or**
-- Source `OMARCHY_ARCH` directly inside `profiledef.sh` (mkarchiso sources this file with bash, so env access is fine).
+- Source `SWARMARCHY_ARCH` directly inside `profiledef.sh` (mkarchiso sources this file with bash, so env access is fine).
 
 `bootmodes` also needs to drop `bios.syslinux` for aarch64 (BIOS boot is x86-only) — `bootmodes=('uefi.grub')` on ARM.
 
 ### 3. Build script — `builder/build-iso.sh`
 
-- **Line 56–57**: Node.js URL grep. Branch on `OMARCHY_ARCH`:
+- **Line 56–57**: Node.js URL grep. Branch on `SWARMARCHY_ARCH`:
   - `x86_64` → `linux-x64.tar.gz`
   - `aarch64` → `linux-arm64.tar.gz`
-- **Line 73**: package additions. Drop `linux-t2` for aarch64 (T2-only x86 kernel) — use plain `linux`. Write to `packages.${OMARCHY_ARCH}` instead of hardcoded `packages.x86_64`.
-- **Line 77**: read same `packages.${OMARCHY_ARCH}` for offline mirror enumeration.
+- **Line 73**: package additions. Drop `linux-t2` for aarch64 (T2-only x86 kernel) — use plain `linux`. Write to `packages.${SWARMARCHY_ARCH}` instead of hardcoded `packages.x86_64`.
+- **Line 77**: read same `packages.${SWARMARCHY_ARCH}` for offline mirror enumeration.
 - **archiso releng overlay** (`cp -r /archiso/configs/releng/*`): the upstream `releng` profile ships only `packages.x86_64`. For aarch64, copy `packages.x86_64` to `packages.aarch64` and prune obviously x86-only entries (`memtest86+`, `intel-ucode`, `amd-ucode`, `edk2-shell` x64 binary, `syslinux`). Land this as a small fixup step in `build-iso.sh` rather than a full fork of `releng`.
 
 ### 4. archinstall package list — `builder/archinstall.packages`
 
 Drop microcode for aarch64 — `intel-ucode` and `amd-ucode` don't exist for ARM. Either:
 - Two lists (`archinstall.packages.x86_64`, `archinstall.packages.aarch64`), or
-- One list with sentinel comments and a filter step in `build-iso.sh:80` that drops microcode lines when `OMARCHY_ARCH=aarch64`.
+- One list with sentinel comments and a filter step in `build-iso.sh:80` that drops microcode lines when `SWARMARCHY_ARCH=aarch64`.
 
 The second is less duplication for one-line drift.
 
@@ -74,7 +74,7 @@ aarch64 has no BIOS — only UEFI. Drop the syslinux path entirely on ARM.
 - **`configs/efiboot/loader/entries/01-archiso-x86_64-linux.conf`**: produce an aarch64 sibling (`01-archiso-aarch64-linux.conf`) at build time — same template, drop microcode initrd lines, swap title. The kernel/initrd paths use `%ARCH%` already in `grub.cfg` but are hardcoded `x86_64` in this file (line 3–4).
 - **`configs/grub/grub.cfg` and `loopback.cfg`**: remove or guard the x86_64 conditionals. The `%ARCH%` placeholder gets substituted by mkarchiso from `profiledef.sh:arch`, so the kernel/initrd paths flip automatically. Manually-written `grub_cpu == 'x86_64'` blocks (lines 34–39, 68, 81–85) should drop on aarch64 builds — easiest done with a build-time sed for the aarch64 path, or by extracting them into a separate `grub-x86_64.cfg.fragment` only included on x86 builds.
 
-The cleanest cut: keep one `grub.cfg` shared, strip the x86 shell/memtest fragments at build time when `OMARCHY_ARCH=aarch64`. Don't fork the file.
+The cleanest cut: keep one `grub.cfg` shared, strip the x86 shell/memtest fragments at build time when `SWARMARCHY_ARCH=aarch64`. Don't fork the file.
 
 ### 6. mkinitcpio preset — `configs/airootfs/etc/mkinitcpio.d/linux.preset`
 
@@ -92,13 +92,13 @@ fi
 ```
 T2 detection is harmless on aarch64 (`lspci` returns no match), so `kernel_choice` falls through to `linux`. **No change strictly required**, but clearer to wrap the lspci probe in `[[ $(uname -m) == "x86_64" ]]` so the intent reads correctly. Cheap.
 
-The archinstall JSON's `mirror_config.custom_servers` (lines 422–424) points at `mirror.omarchy.org`, `mirror.rackspace.com/archlinux`, `geo.mirror.pkgbuild.com` — none of these serve aarch64. For aarch64 the list must be `mirror.archlinuxarm.org` and friends. Branch the JSON template on `OMARCHY_ARCH` (or `uname -m` at runtime, since this file runs on the live ISO).
+The archinstall JSON's `mirror_config.custom_servers` (lines 422–424) points at `mirror.omarchy.org`, `mirror.rackspace.com/archlinux`, `geo.mirror.pkgbuild.com` — none of these serve aarch64. For aarch64 the list must be `mirror.archlinuxarm.org` and friends. Branch the JSON template on `SWARMARCHY_ARCH` (or `uname -m` at runtime, since this file runs on the live ISO).
 
 ### 8. pacman configs — `configs/pacman-online-{stable,rc,edge,offline}.conf`
 
-The `$arch` placeholder is pacman-resolved (matches `Architecture = auto`), so `https://stable-mirror.omarchy.org/$repo/os/$arch` adapts automatically — **as long as the mirror serves aarch64**. The omarchy mirror is the bottleneck (prerequisite #2). The `arch-mact2` repo is x86-only by definition; gate it behind arch on aarch64 builds (drop the section).
+The `$arch` placeholder is pacman-resolved (matches `Architecture = auto`), so `https://stable-mirror.omarchy.org/$repo/os/$arch` adapts automatically — **as long as the mirror serves aarch64**. The swarmarchy mirror is the bottleneck (prerequisite #2). The `arch-mact2` repo is x86-only by definition; gate it behind arch on aarch64 builds (drop the section).
 
-### 9. Smoke-test scripts — `bin/omarchy-iso-boot`, `bin/omarchy-vm`
+### 9. Smoke-test scripts — `bin/swarmarchy-iso-boot`, `bin/swarmarchy-vm`
 
 Detect arch from the ISO filename (or accept a flag) and switch:
 - x86_64: `qemu-system-x86_64`, `/usr/share/edk2/x64/OVMF_CODE.4m.fd` + `OVMF_VARS.4m.fd` (unchanged).
@@ -106,12 +106,12 @@ Detect arch from the ISO filename (or accept a flag) and switch:
 
 Both scripts hardcode the OVMF path; small, mechanical fix.
 
-### 10. Release script — `bin/omarchy-iso-release:52`
+### 10. Release script — `bin/swarmarchy-iso-release:52`
 
 ```bash
 latest_iso=$(\ls -t "$BUILD_RELEASE_PATH"/*x86_64-"$INSTALLER_REF".iso | head -n1)
 ```
-Hardcoded `x86_64` glob. Take an arch arg, or do `*${OMARCHY_ARCH}-${INSTALLER_REF}.iso`. The ISO filename already contains arch (set by archiso from `profiledef.sh`), so this just needs the glob parameterized.
+Hardcoded `x86_64` glob. Take an arch arg, or do `*${SWARMARCHY_ARCH}-${INSTALLER_REF}.iso`. The ISO filename already contains arch (set by archiso from `profiledef.sh`), so this just needs the glob parameterized.
 
 ### 11. CI — `.github/workflows/nightly-build.yml`
 
@@ -135,10 +135,10 @@ If GitHub-hosted ARM runners aren't available on this org's plan, fall back to Q
 ## Files to modify (summary)
 
 Code:
-- `bin/omarchy-iso-make` — add `--arch` flag, branch docker image/platform
-- `bin/omarchy-iso-boot` — branch QEMU binary + OVMF path
-- `bin/omarchy-vm` — same as iso-boot
-- `bin/omarchy-iso-release` — parameterize ISO glob
+- `bin/swarmarchy-iso-make` — add `--arch` flag, branch docker image/platform
+- `bin/swarmarchy-iso-boot` — branch QEMU binary + OVMF path
+- `bin/swarmarchy-vm` — same as iso-boot
+- `bin/swarmarchy-iso-release` — parameterize ISO glob
 - `builder/build-iso.sh` — main branching: Node.js URL, package list filename, releng overlay fixups, kernel package
 - `builder/archinstall.packages` — filter microcode on aarch64 (sentinel comments + filter step)
 - `configs/profiledef.sh` — env-driven `arch` + BCJ filter + bootmodes
@@ -156,9 +156,9 @@ No new files unless we go the dual-list route on archinstall.packages or efiboot
 ## Verification
 
 **Local (host is x86_64):**
-1. `bin/omarchy-iso-make --arch x86_64` — must produce a byte-similar ISO to today's nightly (smoke test for regressions in the refactor).
-2. `bin/omarchy-iso-make --arch aarch64` — succeeds (slow under QEMU binfmt; expect 30-60 min).
-3. `bin/omarchy-iso-boot release/omarchy-*-aarch64-*.iso` — boots to the configurator under `qemu-system-aarch64 -machine virt`. Walk through the picker, confirm archinstall lays down a working system, reboot into the installed system.
+1. `bin/swarmarchy-iso-make --arch x86_64` — must produce a byte-similar ISO to today's nightly (smoke test for regressions in the refactor).
+2. `bin/swarmarchy-iso-make --arch aarch64` — succeeds (slow under QEMU binfmt; expect 30-60 min).
+3. `bin/swarmarchy-iso-boot release/swarmarchy-*-aarch64-*.iso` — boots to the configurator under `qemu-system-aarch64 -machine virt`. Walk through the picker, confirm archinstall lays down a working system, reboot into the installed system.
 4. Live-iso shell: `pacman -Sy && pacman -Si linux` returns an aarch64 package from `mirror.archlinuxarm.org`.
 
 **On real hardware (post green QEMU run):**
@@ -174,5 +174,5 @@ No new files unless we go the dual-list route on archinstall.packages or efiboot
 ## Open risks (call out before implementation)
 
 1. **mkarchiso on aarch64 is less-trodden ground.** It accepts `arch="aarch64"`, but the upstream Arch project doesn't dogfood it. Expect to file/patch around small bugs in archiso's helper scripts. Keep the archiso submodule pin tight so a regression doesn't surprise nightly.
-2. **Limine + LUKS + Btrfs + Snapper on aarch64** — every one of these works individually on ARM, but the combination is what omarchy ships. Worth one manual end-to-end pass before declaring done.
+2. **Limine + LUKS + Btrfs + Snapper on aarch64** — every one of these works individually on ARM, but the combination is what swarmarchy ships. Worth one manual end-to-end pass before declaring done.
 3. **Apple T2 / linux-t2 / `arch-mact2` repo** are silently dropped on aarch64; users mistakenly trying to install the aarch64 ISO on a T2 Mac will get an obviously-wrong result. The configurator could refuse to install when arch mismatch is detected, but that's outside this plan.
