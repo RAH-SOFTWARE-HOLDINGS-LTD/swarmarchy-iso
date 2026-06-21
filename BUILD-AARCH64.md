@@ -1,6 +1,6 @@
 # Building the Swarmarchy ISO for aarch64 (Snapdragon X Elite)
 
-This repo was forked from `swarmarchy-iso` (x86_64) and is being retargeted to
+This repo was forked from `omarchy-iso` (x86_64) and is being retargeted to
 **aarch64** for the Lenovo Yoga Slim 7x (Snapdragon X Elite X1E78100).
 
 ## What the aarch64 surgery already changed
@@ -21,14 +21,12 @@ This repo was forked from `swarmarchy-iso` (x86_64) and is being retargeted to
 
 ## What still blocks a *bootable* image (ordered by severity)
 
-1. **No aarch64 package mirror wired in.** `configs/pacman-online-*.conf` point at
-   `omarchy.org` (x86_64 only). Use `configs/pacman-online-aarch64.example.conf`
-   (Arch Linux ARM mirror) and wire it into the `pacman --config …` lines in
-   `builder/build-iso.sh`. ALARM has no `multilib` and different repo names.
-2. **Swarmarchy custom packages aren't on ALARM.** `walker`, `swarmarchy-*`,
-   `omarchy-keyring`, `yay`, `displaylink`/`evdi`, and a Snapdragon kernel must be
-   rebuilt for aarch64 and hosted in a custom repo (or installed from AUR on first
-   boot). See the `AARCH64 / SNAPDRAGON-X TODO` block in the installer repo's
+1. ~~No aarch64 mirror wired in.~~ **DONE** — `configs/pacman-online-*.conf` now point at
+   the **Arch Linux ARM** mirror (no `omarchy.org`, no `[omarchy]` repo, no `multilib`),
+   and `build-iso.sh` verifies packages with `archlinuxarm-keyring`.
+2. **AUR-only packages.** `walker`, `yay`, `displaylink`/`evdi`, and a Snapdragon kernel
+   aren't in ALARM — build them from the AUR on first boot (or host your own repo). See
+   the `AARCH64 / SNAPDRAGON-X TODO` block in the installer repo's
    `install/swarmarchy-other.packages`.
 3. **archiso `releng` is x86_64-only.** There is no upstream aarch64 releng
    profile. The bootloader path (`uefi.grub`) and the live kernel need an aarch64

@@ -11,13 +11,9 @@ pacman-key --init
 pacman --noconfirm -Sy archlinux-keyring
 pacman --noconfirm -Sy archiso git sudo base-devel jq grub
 
-# Pre-import the swarmarchy signing key so pacman can verify packages without a keyserver lookup
-pacman-key --add /builder/omarchy.gpg
-pacman-key --lsign-key 40DFB630FF42BCFFB047046CF0134EE680CAC571
-
-# Install omarchy-keyring for package verification during build
-pacman --config /configs/pacman-online-${SWARMARCHY_MIRROR}.conf --noconfirm -Sy omarchy-keyring
-pacman-key --populate swarmarchy
+# Generic build: verify ALARM packages with the Arch Linux ARM keyring (no omarchy repo/key).
+pacman --noconfirm -Sy archlinuxarm-keyring
+pacman-key --populate archlinuxarm
 
 # Setup build locations
 build_cache_dir="/var/cache"
@@ -89,8 +85,7 @@ mkdir -p "$build_cache_dir/airootfs/opt/packages/"
 cp "/tmp/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
 
 # Add our additional packages to the live ISO package list.
-# aarch64: dropped `linux-t2` (Apple) and `plymouth`. `omarchy-keyring` is x86-only
-# (TODO: provide an aarch64 keyring/repo before this will resolve).
+# aarch64: dropped `linux-t2` (Apple) and `plymouth`.
 arch_packages=(git gum jq openssl tzupdate lvm2 cryptsetup parted)
 printf '%s\n' "${arch_packages[@]}" >>"$build_cache_dir/packages.$ARCH"
 

@@ -3,7 +3,7 @@
 
 iso_name="swarmarchy"
 iso_label="SWARMARCHY_$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y%m)"
-iso_publisher="Swarmarchy <https://omarchy.org>"
+iso_publisher="Swarmarchy"
 iso_application="Swarmarchy Installer"
 iso_version="$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y.%m.%d)"
 install_dir="arch"
