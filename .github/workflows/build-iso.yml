@@ -6,17 +6,16 @@
 # but on a native arm64 runner with an Arch Linux ARM base image.
 #
 # ──────────────────────────────────────────────────────────────────────────────
-# ⚠️  KNOWN BLOCKERS — this will NOT produce a bootable ISO until the build script
-#     and mirrors are ported to aarch64. See docs/02-summary-of-changes.md §4.
-#     1. builder/build-iso.sh hardcodes `packages.x86_64`, the x86 `releng` archiso
-#        profile, `linux-t2`, and Node `linux-x64`. Needs `packages.aarch64`,
-#        an aarch64 kernel, and Node `linux-arm64`.
-#     2. The Swarmarchy package CDN (configs/pacman-online-*.conf + omarchy-keyring)
-#        is x86_64-only. aarch64 needs an Arch Linux ARM mirror AND the swarmarchy-repo
-#        packages (e.g. `walker`) rebuilt for ARM, or the `pacman -Syw` step fails.
-#     3. archinstall.packages ships intel-ucode/amd-ucode/sof-firmware (x86 only).
-#     Until then, run via workflow_dispatch to exercise the pipeline; expect the
-#     package-download step to fail on unresolved aarch64 packages.
+# ⚠️  This does NOT yet produce a bootable ISO. The aarch64 surgery is already done
+#     (profiledef arch=aarch64, build-iso.sh ARCH/packages.$ARCH, ALARM mirror,
+#     archlinuxarm-keyring, arm64 Node). What remains is the hard part:
+#       • archiso's `releng` profile is x86_64-only (no aarch64 profile) — likely
+#         switch the builder to `archboot`.
+#       • the Snapdragon kernel + Qualcomm firmware + DTB still need bundling.
+#     Expect the build to fail around the offline-mirror / releng-aarch64 step —
+#     that's the known frontier, not a regression. Run via workflow_dispatch to
+#     exercise the pipeline up to that point.
+#     Full blocker list + plan: BUILD-AARCH64.md.
 # ──────────────────────────────────────────────────────────────────────────────
 
 name: Build ISO (aarch64)
@@ -27,13 +26,17 @@ on:
       installer_ref:
         description: "swarmarchy installer git ref (branch/tag)"
         required: false
-        default: "master"
+        # The Sway/aarch64 layer lives on rename-swarmarchy; switch back to
+        # "master" once that branch is merged.
+        default: "rename-swarmarchy"
       mirror:
         description: "Package mirror channel (stable|rc|edge)"
         required: false
         default: "stable"
-  schedule:
-    - cron: "1 0 * * *" # nightly at 00:01 UTC
+  # Nightly schedule disabled: the build can't succeed yet (known blockers above),
+  # so a cron would just email a failure every day. Re-enable once it produces an ISO.
+  # schedule:
+  #   - cron: "1 0 * * *" # nightly at 00:01 UTC
 
 permissions:
   contents: read
@@ -42,7 +45,7 @@ env:
   # Native arm64 Arch image. Swap if you prefer menci/archlinuxarm etc.
   ARCH_BASE_IMAGE: "lopsided/archlinux-arm64v8:latest"
   SWARMARCHY_INSTALLER_REPO: "RAH-SOFTWARE-HOLDINGS-LTD/swarmarchy"
-  SWARMARCHY_INSTALLER_REF: ${{ github.event.inputs.installer_ref || 'master' }}
+  SWARMARCHY_INSTALLER_REF: ${{ github.event.inputs.installer_ref || 'rename-swarmarchy' }}
   SWARMARCHY_MIRROR: ${{ github.event.inputs.mirror || 'stable' }}
 
 jobs:
