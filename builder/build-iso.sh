@@ -7,12 +7,24 @@ set -e
 ARCH="${ARCH:-aarch64}"
 
 # Note that these are packages installed to the Arch container used to build the ISO.
+# --disable-sandbox: the build host's kernel predates Landlock, so pacman's sandbox user
+# switch fails ("Landlock ruleset could not be applied"). Same reason the manual install
+# needed it (see swarmarchy docs/05).
+PACMAN="pacman --noconfirm --disable-sandbox"
 pacman-key --init
-pacman --noconfirm -Sy archlinux-keyring
-pacman --noconfirm -Sy archiso git sudo base-devel jq grub
+$PACMAN -Sy archlinux-keyring
+$PACMAN -Sy git sudo base-devel jq grub curl
+
+# archiso is NOT in the Arch Linux ARM repos (it's an x86-project package), but the package
+# is arch=any — mkarchiso is a pure bash script that runs fine on aarch64. So pull the `any`
+# package straight from a regular Arch mirror instead of `pacman -S archiso` (which 404s on
+# ALARM). This is what lets us keep mkarchiso instead of switching to archboot.
+archiso_pkg=$(curl -s https://geo.mirror.pkgbuild.com/extra/os/x86_64/ \
+  | grep -o 'archiso-[0-9][^"]*-any.pkg.tar.zst' | sort -u | tail -1)
+$PACMAN -U "https://geo.mirror.pkgbuild.com/extra/os/x86_64/$archiso_pkg"
 
 # Generic build: verify ALARM packages with the Arch Linux ARM keyring (no omarchy repo/key).
-pacman --noconfirm -Sy archlinuxarm-keyring
+$PACMAN -Sy archlinuxarm-keyring
 pacman-key --populate archlinuxarm
 
 # Setup build locations
@@ -99,7 +111,7 @@ all_packages+=($(strip_pkgs /builder/archinstall.packages))
 
 # Download all the packages to the offline mirror inside the ISO
 mkdir -p /tmp/offlinedb
-pacman --config /configs/pacman-online-${SWARMARCHY_MIRROR}.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
+pacman --config /configs/pacman-online-${SWARMARCHY_MIRROR}.conf --noconfirm --disable-sandbox -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
 repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
 
 # Create a symlink to the offline mirror instead of duplicating it.

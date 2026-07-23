@@ -53,10 +53,23 @@ mkdir -p "$BUILD_RELEASE_PATH"
 SWARMARCHY_INSTALLER_REPO="${SWARMARCHY_INSTALLER_REPO:-RAH-SOFTWARE-HOLDINGS-LTD/swarmarchy}"
 SWARMARCHY_INSTALLER_REF="${SWARMARCHY_INSTALLER_REF:-master}"
 SWARMARCHY_MIRROR="${SWARMARCHY_MIRROR:-stable}"
+ARCH="${ARCH:-aarch64}"
+
+# The base container the builder runs inside must match the target arch: the official
+# archlinux/archlinux image is x86_64-only (grabbing it on ARM pulls the amd64 manifest and
+# dies with "exec format error"). menci/archlinuxarm is the maintained aarch64 Arch Linux ARM
+# image (the plan's archlinuxarm/archlinuxarm doesn't exist on Docker Hub).
+case "$ARCH" in
+  aarch64) BUILD_IMAGE="menci/archlinuxarm:latest"; DOCKER_PLATFORM="linux/arm64" ;;
+  x86_64)  BUILD_IMAGE="archlinux/archlinux:latest"; DOCKER_PLATFORM="linux/amd64" ;;
+  *) echo "Unsupported ARCH: $ARCH" >&2; exit 1 ;;
+esac
 
 DOCKER_ARGS=(
   --rm
   --privileged
+  --platform "$DOCKER_PLATFORM"
+  -e "ARCH=$ARCH"
   -e "SWARMARCHY_INSTALLER_REPO=$SWARMARCHY_INSTALLER_REPO"
   -e "SWARMARCHY_INSTALLER_REF=$SWARMARCHY_INSTALLER_REF"
   -e "SWARMARCHY_MIRROR=$SWARMARCHY_MIRROR"
@@ -90,7 +103,7 @@ if [[ -z "$NO_CACHE" ]]; then
 fi
 
 # Run the builder with assembled args
-docker run "${DOCKER_ARGS[@]}" archlinux/archlinux:latest /$BUILD_SCRIPT
+docker run "${DOCKER_ARGS[@]}" "$BUILD_IMAGE" /$BUILD_SCRIPT
 
 # Move as install ref
 latest_iso=$(\ls -t "$BUILD_RELEASE_PATH"/*.iso | head -n1)
