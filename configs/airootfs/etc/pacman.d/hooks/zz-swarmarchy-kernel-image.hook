@@ -1,0 +1,15 @@
+# ALARM's linux-aarch64 installs the kernel as /boot/Image (+ Image.gz), not
+# /boot/vmlinuz-*. mkarchiso globs /boot/vmlinuz-* to stage the kernel onto the ISO
+# (and grub.cfg/loopback.cfg reference vmlinuz-linux), so materialize that name.
+# This hook lives in airootfs and runs during pacstrap inside the airootfs, after
+# linux-aarch64 is installed. zz- prefix orders it last, after mkinitcpio's own hooks.
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Target = boot/Image
+
+[Action]
+Description = Providing vmlinuz-linux for archiso (aarch64 Image -> vmlinuz-linux)
+When = PostTransaction
+Exec = /usr/bin/cp -f /boot/Image /boot/vmlinuz-linux

@@ -1,0 +1,133 @@
+#!/bin/bash
+# swarmarchy-stage-qcom-firmware — provision the Snapdragon X Elite board firmware onto a
+# freshly-installed root at install time, from a user-staged directory.
+#
+# The Lenovo Yoga Slim 7x (x1e80100, board LENOVO/83ED) needs five proprietary Qualcomm blobs
+# at an EXACT board path or you get: no external USB-C / DP-alt monitors, dead onboard audio
+# (the ADSP/CDSP remoteproc chain), and the GPU stuck on software rendering (the display MBN).
+# The bulk firmware copy does NOT land them there — they must sit, flattened, at the board path.
+#
+# Qualcomm licensing forbids redistributing these, so they are NEVER baked into the published
+# ISO. The user stages them per-machine: run docs/copy-qcom-firmware.ps1 on Windows to collect
+# them into a `firmware/` directory, then drop that directory onto any disk attached at install
+# time (e.g. a second partition on the USB stick, or a second USB). This script finds it, and
+# places the five board blobs at the path the msm / remoteproc drivers probe.
+#
+# Best-effort and NON-FATAL: on non-Yoga hardware, or when no staged `firmware/` is found, it
+# logs and exits 0 so the install still completes. See docs/05 §"External monitors (USB-C DP-alt)".
+#
+# Usage: swarmarchy-stage-qcom-firmware [TARGET_ROOT]   (default /mnt)
+
+set -uo pipefail
+
+TARGET="${1:-/mnt}"
+BOARD_REL="lib/firmware/qcom/x1e80100/LENOVO/83ED"
+BOARD_DIR="$TARGET/$BOARD_REL"
+
+# The exact blobs the msm (GPU/display) + remoteproc (ADSP/CDSP → Type-C DP-alt + audio) drivers
+# probe for at the board path. Names are stable across X Elite DriverStore packages.
+REQUIRED=(qcadsp8380.mbn adsp_dtbs.elf qccdsp8380.mbn cdsp_dtbs.elf qcdxkmsuc8380.mbn)
+
+log() { printf '  [qcom-fw] %s\n' "$*"; }
+
+# --- only meaningful on the X Elite; skip quietly elsewhere so the ISO stays generic ---
+if [[ -r /sys/firmware/devicetree/base/compatible ]] \
+   && ! tr '\0' '\n' </sys/firmware/devicetree/base/compatible | grep -q 'x1e80100'; then
+  log "not a Snapdragon X Elite (no x1e80100 in DT compatible); skipping firmware staging."
+  exit 0
+fi
+
+WORK="$(mktemp -d)"
+MOUNTS=()
+cleanup() {
+  local m
+  for m in "${MOUNTS[@]:-}"; do mountpoint -q "$m" 2>/dev/null && umount "$m" 2>/dev/null; done
+  rm -rf "$WORK" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+# Root device backing the install target — never scan/remount it or its siblings.
+target_src="$(findmnt -no SOURCE --target "$TARGET" 2>/dev/null | sed 's/\[.*//')"
+target_disk="$(lsblk -no PKNAME "$target_src" 2>/dev/null | head -1)"
+
+# Mount a partition read-only; echo its mountpoint on success.
+try_mount_ro() {
+  local dev="$1" mp="$WORK/mnt-${1//\//_}"
+  mkdir -p "$mp"
+  if mount -o ro "$dev" "$mp" 2>/dev/null; then
+    MOUNTS+=("$mp"); echo "$mp"; return 0
+  fi
+  rmdir "$mp" 2>/dev/null || true
+  return 1
+}
+
+# Copy each required blob (flattened, first match wins) out of a source tree into the board dir.
+# Echoes the count present afterwards.
+place_from_tree() {
+  local root="$1" placed=0 f src
+  for f in "${REQUIRED[@]}"; do
+    [[ -f "$BOARD_DIR/$f" ]] && { placed=$((placed + 1)); continue; }
+    src="$(find "$root" -type f -iname "$f" 2>/dev/null | head -1)"
+    if [[ -n "$src" ]] && install -Dm644 "$src" "$BOARD_DIR/$f" 2>/dev/null; then
+      placed=$((placed + 1))
+    fi
+  done
+  echo "$placed"
+}
+
+# True once all five blobs are present at the board path.
+all_present() {
+  local f
+  for f in "${REQUIRED[@]}"; do [[ -f "$BOARD_DIR/$f" ]] || return 1; done
+  return 0
+}
+
+mkdir -p "$BOARD_DIR"
+
+# --- Scan attached filesystems for the user-staged `firmware/` directory ---
+# `firmware/` is what docs/copy-qcom-firmware.ps1 produces (it also writes a MANIFEST.csv there).
+# We skip the disk we're installing onto, and confirm a candidate by actually finding the blobs
+# inside it (place_from_tree) — so an unrelated `firmware/` folder simply matches nothing.
+while read -r name fstype; do
+  [[ -z "$name" ]] && continue
+  dev="/dev/$name"
+  [[ "$name" == "$target_disk" ]] && continue
+  [[ -n "$target_disk" && "$(lsblk -no PKNAME "$dev" 2>/dev/null | head -1)" == "$target_disk" ]] && continue
+  case "$fstype" in
+    swap | crypto_LUKS | squashfs | iso9660 | linux_raid_member | LVM2_member) continue ;;
+  esac
+  mp="$(try_mount_ro "$dev")" || continue
+  # Prefer a `firmware/` dir carrying the .ps1's MANIFEST.csv, else any `firmware/` dir.
+  fwroot="$(find "$mp" -maxdepth 4 -type f -iname 'MANIFEST.csv' -path '*/firmware/*' 2>/dev/null | head -1)"
+  fwroot="${fwroot%/MANIFEST.csv}"
+  [[ -z "$fwroot" ]] && fwroot="$(find "$mp" -maxdepth 3 -type d -iname 'firmware' 2>/dev/null | head -1)"
+  if [[ -n "$fwroot" ]]; then
+    n="$(place_from_tree "$fwroot")"
+    if [[ "$n" -gt 0 ]]; then
+      log "staged $n/${#REQUIRED[@]} blob(s) from ${dev} (staged firmware/)"
+      all_present && break
+    fi
+  fi
+done < <(lsblk -rno NAME,FSTYPE | awk 'NF==2')
+
+# --- report ---
+placed_now=0
+missing=()
+for f in "${REQUIRED[@]}"; do
+  if [[ -f "$BOARD_DIR/$f" ]]; then placed_now=$((placed_now + 1)); else missing+=("$f"); fi
+done
+
+if [[ "$placed_now" -eq 0 ]]; then
+  rmdir "$BOARD_DIR" 2>/dev/null || true # don't leave an empty board dir behind
+  log "no staged firmware/ found on any attached disk."
+  log "external monitors / audio / GPU accel will not work until you place the five blobs at"
+  log "  /$BOARD_REL"
+  log "Run docs/copy-qcom-firmware.ps1 on Windows, put the firmware/ dir on the USB, reinstall —"
+  log "or copy them by hand later; see docs/05 §External monitors."
+elif [[ ${#missing[@]} -gt 0 ]]; then
+  log "WARNING: staged $placed_now/${#REQUIRED[@]}; still missing: ${missing[*]}"
+else
+  log "all ${#REQUIRED[@]} board blobs staged at /$BOARD_REL ✓"
+fi
+
+exit 0

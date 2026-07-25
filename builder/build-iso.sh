@@ -45,7 +45,10 @@ rm "$build_cache_dir/airootfs/etc/motd"
 # and drop entries that cannot resolve on aarch64.
 if [[ "$ARCH" != "x86_64" && -f "$build_cache_dir/packages.x86_64" ]]; then
   mv "$build_cache_dir/packages.x86_64" "$build_cache_dir/packages.$ARCH"
-  sed -i -E '/^(intel-ucode|amd-ucode|memtest86\+|memtest86\+-efi|syslinux|edk2-shell|b43-fwcutter)$/d' \
+  # x86-only / VM-guest / Arch-only entries from the releng packages.x86_64 list that have no
+  # aarch64 package in ALARM: microcode, memtest, syslinux(BIOS), broadcom-wl, VM guest tools
+  # (hyperv/open-vm-tools/virtualbox), refind (we boot via grub), reflector (Arch mirror tool).
+  sed -i -E '/^(intel-ucode|amd-ucode|memtest86\+|memtest86\+-efi|syslinux|edk2-shell|b43-fwcutter|broadcom-wl|hyperv|open-vm-tools|virtualbox-guest-utils-nox|refind|reflector)$/d' \
     "$build_cache_dir/packages.$ARCH"
   # ALARM ships the generic kernel as `linux-aarch64`, not `linux`.
   sed -i -E 's/^linux$/linux-aarch64/; s/^linux-headers$/linux-aarch64-headers/' \
@@ -59,6 +62,12 @@ rm -rf "$build_cache_dir/airootfs/etc/xdg/reflector"
 
 # Bring in our configs
 cp -r /configs/* $build_cache_dir/
+
+# ALARM ships linux-aarch64.preset (builds /boot/initramfs-linux.img with our archiso.conf
+# HOOKS drop-in). The releng profile's linux.preset targets the x86 `linux` package we never
+# install; left in place it triggers a spurious (non-fatal) mkinitcpio failure during pacstrap
+# ("-k /boot/vmlinuz-linux must be readable"). Remove it so only linux-aarch64.preset runs.
+rm -f "$build_cache_dir/airootfs/etc/mkinitcpio.d/linux.preset"
 
 # Persist SWARMARCHY_MIRROR so it's available at install time
 echo "$SWARMARCHY_MIRROR" > "$build_cache_dir/airootfs/root/swarmarchy_mirror"
@@ -112,7 +121,14 @@ all_packages+=($(strip_pkgs /builder/archinstall.packages))
 # Download all the packages to the offline mirror inside the ISO
 mkdir -p /tmp/offlinedb
 pacman --config /configs/pacman-online-${SWARMARCHY_MIRROR}.conf --noconfirm --disable-sandbox -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
-repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
+# ALARM packages (and our custom repo pkgs, host makepkg PKGEXT=.pkg.tar.xz) are xz-compressed,
+# not zst. Match both extensions via nullglob so an unmatched pattern expands to nothing instead
+# of a literal glob string (which repo-add would treat as a missing file, tripping set -e).
+# The *.pkg.tar.{xz,zst} patterns exclude the detached *.sig signatures by construction.
+shopt -s nullglob
+offline_pkgs=("$offline_mirror_dir/"*.pkg.tar.zst "$offline_mirror_dir/"*.pkg.tar.xz)
+shopt -u nullglob
+repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "${offline_pkgs[@]}"
 
 # Create a symlink to the offline mirror instead of duplicating it.
 # mkarchiso needs packages at /var/cache/swarmarchy/mirror/offline in the container,
@@ -123,6 +139,41 @@ ln -s "$offline_mirror_dir" "/var/cache/swarmarchy/mirror/offline"
 # Copy the offline pacman.conf to the ISO's /etc directory so the live environment uses our
 # same config when booted. 
 cp $build_cache_dir/pacman-offline.conf "$build_cache_dir/airootfs/etc/pacman.conf"
+
+# aarch64 boot: the Snapdragon X Elite Yoga needs its board device tree handed to the kernel
+# by GRUB (`devicetree` in grub.cfg/loopback.cfg). mkarchiso copies any non-.cfg file from the
+# profile's grub/ dir verbatim into the ISO's /boot/grub/, so stage the DTB there. It ships
+# inside ALARM's linux-aarch64 package (already downloaded to the offline mirror) at
+# boot/dtbs/qcom/x1e80100-lenovo-yoga-slim7x.dtb.
+dtb_rel="boot/dtbs/qcom/x1e80100-lenovo-yoga-slim7x.dtb"
+linux_pkg=$(ls -1 "$offline_mirror_dir/"linux-aarch64-*.pkg.tar.* 2>/dev/null | grep -vE '\.sig$' | head -1)
+if [[ -z "$linux_pkg" ]]; then
+  echo "ERROR: linux-aarch64 package not found in offline mirror; cannot extract board DTB." >&2
+  exit 1
+fi
+mkdir -p "$build_cache_dir/grub"
+bsdtar -xOf "$linux_pkg" "$dtb_rel" > "$build_cache_dir/grub/x1e80100-lenovo-yoga-slim7x.dtb"
+if [[ ! -s "$build_cache_dir/grub/x1e80100-lenovo-yoga-slim7x.dtb" ]]; then
+  echo "ERROR: extracted Yoga DTB is empty (expected $dtb_rel in $linux_pkg)." >&2
+  exit 1
+fi
+
+# mkarchiso hardcodes the GRUB modules baked into the EFI core image (grubmodules=(...) in
+# _make_bootmode_uefi.grub). That static list is x86-centric: it includes `at_keyboard` (PS/2,
+# which has no arm64-efi .mod so grub-mkstandalone aborts) and omits `fdt` (which provides the
+# `devicetree` command the Snapdragon needs). Rather than hard-code an arm64 module list that
+# could drift with the grub package, inject a filter right after the array definition that adds
+# `fdt` and keeps only modules that actually have a .mod under /usr/lib/grub/$grub_target.
+if ! grep -q 'SWARMARCHY_GRUBMOD_FILTER' /usr/bin/mkarchiso; then
+  awk '
+    { print }
+    /usbserial_pl2303 usbserial_usbdebug video xfs zstd\)/ {
+      print "    # SWARMARCHY_GRUBMOD_FILTER: add fdt, keep only modules present for $grub_target"
+      print "    { local _gm=() _m; for _m in fdt \"${grubmodules[@]}\"; do [[ -f \"/usr/lib/grub/${grub_target}/${_m}.mod\" ]] && _gm+=(\"$_m\"); done; grubmodules=(\"${_gm[@]}\"); }"
+    }
+  ' /usr/bin/mkarchiso > /tmp/mkarchiso.patched && cat /tmp/mkarchiso.patched > /usr/bin/mkarchiso
+fi
+grep -q 'SWARMARCHY_GRUBMOD_FILTER' /usr/bin/mkarchiso || { echo "ERROR: failed to patch mkarchiso grubmodules filter." >&2; exit 1; }
 
 # Finally, we assemble the entire ISO
 mkarchiso -v -w "$build_cache_dir/work/" -o "/out/" "$build_cache_dir/"

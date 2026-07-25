@@ -190,6 +190,12 @@ EOF
   find /mnt/home/$SWARMARCHY_USER/.local/share/swarmarchy -type f -path "*/bin/*" -exec chmod +x {} \;
   chmod +x /mnt/home/$SWARMARCHY_USER/.local/share/swarmarchy/boot.sh 2>/dev/null || true
   find /mnt/home/$SWARMARCHY_USER/.local/share/swarmarchy/default/waybar -type f -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
+
+  # Stage the per-machine Qualcomm X Elite board firmware onto the new root. Licensing forbids
+  # shipping it in the ISO, so this sources the five board blobs from a user-staged qcom-firmware/
+  # dir or the dual-boot Windows DriverStore and drops them at the exact board path the msm /
+  # remoteproc drivers probe. Best-effort and non-fatal (no-op on non-Yoga hardware).
+  swarmarchy-stage-qcom-firmware /mnt || true
 }
 
 configure_login_for_unencrypted_install() {

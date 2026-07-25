@@ -25,4 +25,5 @@ file_permissions=(
   ["/root/configurator"]="0:0:755"
   ["/var/cache/swarmarchy/mirror/offline/"]="0:0:775"
   ["/usr/local/bin/swarmarchy-upload-log"]="0:0:755"
+  ["/usr/local/bin/swarmarchy-stage-qcom-firmware"]="0:0:755"
 )
