@@ -125,6 +125,246 @@ cleanup_install_disk() {
   udevadm settle || true
 }
 
+# ── Dual-boot (Step 5.2) ─────────────────────────────────────────────────
+# The configurator writes user_dualboot.env when the user picks an alongside
+# install. In that mode archinstall runs with config_type=pre_mounted_config, so
+# it does NO partitioning, formatting or mounting -- everything below is ours.
+
+dualboot_enabled() {
+  [[ -f user_install_mode.txt && $(<user_install_mode.txt) == "dualboot" ]]
+}
+
+# Create the root partition inside the free region the configurator measured,
+# format it Btrfs, lay out the subvolumes and mount the whole tree at /mnt.
+# The existing ESP is mounted, never formatted -- it is shared with Windows.
+prepare_dualboot_target() {
+  # shellcheck source=/dev/null
+  source user_dualboot.env
+
+  local end_mib=$((DUALBOOT_FREE_START_MIB + DUALBOOT_FREE_SIZE_MIB))
+
+  # parted reports a trailing free region as running to the very end of the
+  # device, but the GPT backup header lives there -- asking for that exact end
+  # fails with "location N is outside of the device". Keep 1MiB in reserve.
+  local disk_mib
+  disk_mib=$(parted -ms "$DUALBOOT_DISK" unit MiB print 2>/dev/null |
+    awk -F: 'NR==2 { gsub(/MiB/, "", $2); print int($2) }')
+  if [[ -n $disk_mib ]] && (( end_mib > disk_mib - 1 )); then
+    end_mib=$((disk_mib - 1))
+  fi
+
+  # Swarmarchy gets its OWN ESP at the head of the free region. Sharing the
+  # Windows ESP means our kernels/UKIs/snapshot entries compete with Windows for
+  # space -- and a full ESP breaks Windows' boot writes too. A dedicated one also
+  # means the Limine fallback (EFI/BOOT) lands on our partition instead of
+  # overwriting whatever bootloader already owns the existing ESP.
+  local esp_end_mib=$((DUALBOOT_FREE_START_MIB + DUALBOOT_ESP_MIB))
+
+  echo "Dual-boot: ESP ${DUALBOOT_FREE_START_MIB}MiB-${esp_end_mib}MiB, root ${esp_end_mib}MiB-${end_mib}MiB on $DUALBOOT_DISK"
+
+  # Identify new partitions by difference -- GPT numbering is not predictable
+  # (a freed slot renumbers), so we never assume "the next number".
+  local before after esp_part root_part
+  before=$(lsblk -rnpo PATH "$DUALBOOT_DISK" | sort)
+
+  parted -s --align optimal "$DUALBOOT_DISK" unit MiB \
+    mkpart swarmarchy-boot fat32 "$DUALBOOT_FREE_START_MIB" "$esp_end_mib"
+  partprobe "$DUALBOOT_DISK" 2>/dev/null || true
+  udevadm settle
+
+  after=$(lsblk -rnpo PATH "$DUALBOOT_DISK" | sort)
+  esp_part=$(comm -13 <(echo "$before") <(echo "$after") | head -n1)
+  if [[ -z $esp_part || ! -b $esp_part ]]; then
+    echo "Dual-boot: could not identify the new ESP" >&2
+    return 1
+  fi
+
+  # Mark it as an EFI System Partition so firmware (and other installers) see it.
+  local esp_num
+  esp_num=$(cat "/sys/class/block/$(basename "$esp_part")/partition")
+  parted -s "$DUALBOOT_DISK" set "$esp_num" esp on
+  parted -s "$DUALBOOT_DISK" set "$esp_num" boot on 2>/dev/null || true
+
+  before="$after"
+  parted -s --align optimal "$DUALBOOT_DISK" unit MiB \
+    mkpart swarmarchy btrfs "$esp_end_mib" "$end_mib"
+  partprobe "$DUALBOOT_DISK" 2>/dev/null || true
+  udevadm settle
+
+  after=$(lsblk -rnpo PATH "$DUALBOOT_DISK" | sort)
+  root_part=$(comm -13 <(echo "$before") <(echo "$after") | head -n1)
+  if [[ -z $root_part || ! -b $root_part ]]; then
+    echo "Dual-boot: could not identify the new root partition" >&2
+    return 1
+  fi
+
+  echo "Dual-boot: ESP=$esp_part root=$root_part"
+
+  mkfs.vfat -F32 -n SWARMBOOT "$esp_part"
+  mkfs.btrfs -f -L swarmarchy "$root_part"
+
+  # Subvolume layout mirrors the wipe path so snapshots/rollback behave the same.
+  mount "$root_part" /mnt
+  local sv
+  for sv in @ @home @log @pkg @snapshots; do
+    btrfs subvolume create "/mnt/$sv"
+  done
+  umount /mnt
+
+  local opts="compress=zstd,noatime"
+  mount -o "$opts,subvol=@" "$root_part" /mnt
+  mkdir -p /mnt/home /mnt/var/log /mnt/var/cache/pacman/pkg /mnt/.snapshots /mnt/boot
+  mount -o "$opts,subvol=@home" "$root_part" /mnt/home
+  mount -o "$opts,subvol=@log" "$root_part" /mnt/var/log
+  mount -o "$opts,subvol=@pkg" "$root_part" /mnt/var/cache/pacman/pkg
+  mount -o "$opts,subvol=@snapshots" "$root_part" /mnt/.snapshots
+
+  # Limine reads only FAT/ISO9660, so the kernel, initramfs, DTB and UKIs all
+  # have to live on the ESP rather than on Btrfs. This is ours alone.
+  mount "$esp_part" /mnt/boot
+
+  DUALBOOT_ROOT_PART="$root_part"
+  DUALBOOT_ROOT_UUID=$(blkid -s UUID -o value "$root_part")
+  DUALBOOT_ESP="$esp_part"
+  export DUALBOOT_ROOT_PART DUALBOOT_ROOT_UUID DUALBOOT_ESP
+
+  echo "Dual-boot: mounted tree"
+  findmnt -R /mnt -o TARGET,SOURCE,FSTYPE,OPTIONS
+}
+
+# Keep the ESP small: linux-aarch64 ships ~120MiB of device trees, but a given
+# machine needs exactly one. Without this the shared ESP fills up and there is
+# no headroom left for Limine snapshot entries.
+limit_target_dtbs() {
+  local keep="$1"
+  [[ -n $keep ]] || return 0
+
+  cat >>/mnt/etc/pacman.conf <<EOF
+
+# Swarmarchy: keep only this board's device tree on the shared ESP.
+NoExtract = boot/dtbs/*
+NoExtract = !$keep
+EOF
+}
+
+# Install Limine into its OWN directory on the shared ESP and register it with
+# the firmware. EFI/Microsoft and EFI/BOOT are left exactly as they are, so
+# Windows' bootloader and the existing boot order keep working.
+install_dualboot_bootloader() {
+  local esp_dir="/mnt/boot/EFI/swarmarchy"
+  local loader='\EFI\swarmarchy\BOOTAA64.EFI'
+
+  mkdir -p "$esp_dir"
+  cp /usr/share/limine/BOOTAA64.EFI "$esp_dir/BOOTAA64.EFI"
+
+  # Board-gated kernel arguments. These are what the Yoga Slim 7x needs to boot;
+  # on anything else only the generic root= arguments are used.
+  local board_args=""
+  local dtb_rel="" dtb_line=""
+  if grep -qa "x1e80100" /sys/firmware/devicetree/base/compatible 2>/dev/null; then
+    board_args=" pd_ignore_unused clk_ignore_unused fw_devlink=off efi=novamp cma=128M rootwait"
+    dtb_rel="boot/dtbs/qcom/x1e80100-lenovo-yoga-slim7x.dtb"
+    [[ -f "/mnt/$dtb_rel" ]] || dtb_rel=""
+  fi
+  [[ -n $dtb_rel ]] && dtb_line="    dtb_path: boot():/${dtb_rel#boot/}"
+
+  # ALARM installs the kernel as /boot/Image, not /boot/vmlinuz-linux.
+  local kernel_img="Image"
+  [[ -f /mnt/boot/$kernel_img ]] || kernel_img="vmlinuz-linux"
+
+  # Write the config at the ESP ROOT, not next to the binary. Limine checks
+  # "<EFI app path>/limine.conf" FIRST and, failing that, scans the ESP for
+  # /limine.conf (CONFIG.md "Location of the config file") -- so both find it
+  # here. Critically, /boot IS the ESP on the installed system, so this is the
+  # "/boot/limine.conf" that the swarmarchy layer's install/login/limine-snapper.sh
+  # searches for; that script exits 1 if it finds no config, and it deliberately
+  # preserves this path while deleting configs found anywhere else. Putting a
+  # limine.conf in $esp_dir as well would shadow it and hide the layer's entries.
+  cat >"/mnt/boot/limine.conf" <<EOF
+timeout: 3
+
+/Swarmarchy
+    protocol: linux
+    path: boot():/$kernel_img
+    cmdline: root=UUID=$DUALBOOT_ROOT_UUID rootflags=subvol=@ rw$board_args
+    module_path: boot():/initramfs-linux.img
+$dtb_line
+EOF
+
+  # Refresh the copied binary whenever the limine package is upgraded.
+  mkdir -p /mnt/etc/pacman.d/hooks
+  cat >/mnt/etc/pacman.d/hooks/99-limine.hook <<EOF
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = limine
+
+[Action]
+Description = Deploying Limine after upgrade...
+When = PostTransaction
+Exec = /bin/sh -c "/usr/bin/cp /usr/share/limine/BOOTAA64.EFI /boot/EFI/swarmarchy/BOOTAA64.EFI"
+EOF
+
+  limit_target_dtbs "$dtb_rel"
+
+  # Register with the firmware, preserving the existing boot order. efibootmgr
+  # puts a new entry first; we restore the previous order with ours appended so
+  # the machine keeps booting whatever it booted before until the user chooses.
+  local esp_disk esp_partnum prev_order new_num
+  esp_disk=$(lsblk -no PKNAME "$DUALBOOT_ESP" | tail -n1)
+  esp_disk="/dev/$esp_disk"
+  esp_partnum=$(cat "/sys/class/block/$(basename "$DUALBOOT_ESP")/partition" 2>/dev/null)
+  prev_order=$(efibootmgr | awk -F': *' '/^BootOrder:/ {print $2}')
+
+  if [[ -n $esp_partnum ]]; then
+    efibootmgr --create --disk "$esp_disk" --part "$esp_partnum" \
+      --label "Swarmarchy" --loader "$loader" --unicode >/dev/null || true
+
+    new_num=$(efibootmgr | awk '/^Boot[0-9A-Fa-f]{4}\*? Swarmarchy$/ {print substr($1,5,4); exit}')
+    if [[ -n $new_num && -n $prev_order ]]; then
+      efibootmgr --bootorder "${prev_order},${new_num}" >/dev/null || true
+    fi
+  else
+    echo "Dual-boot: could not determine ESP partition number; skipping NVRAM entry" >&2
+  fi
+
+  echo "Dual-boot: Limine installed to EFI/swarmarchy (Windows entries untouched)"
+}
+
+# archinstall's Snapper support is part of its btrfs_options, which the
+# pre_mounted_config path never reads (device.py returns early for Pre_mount).
+# Set it up ourselves so an alongside install gets the same rollback story as a
+# wipe install. Non-fatal: a missing snapper config does not stop the machine
+# from booting.
+configure_dualboot_snapper() {
+  arch-chroot /mnt command -v snapper >/dev/null 2>&1 || {
+    echo "Dual-boot: snapper not present, skipping snapshot config" >&2
+    return 0
+  }
+
+  # create-config insists on making /.snapshots itself, so hand it a clean path
+  # and then swap our @snapshots subvolume back in underneath.
+  umount /mnt/.snapshots 2>/dev/null || true
+  rmdir /mnt/.snapshots 2>/dev/null || true
+
+  if ! arch-chroot /mnt snapper --no-dbus -c root create-config /; then
+    echo "Dual-boot: snapper create-config failed, continuing" >&2
+  fi
+
+  # Drop the subvolume create-config just made and restore ours.
+  if [[ -d /mnt/.snapshots ]]; then
+    btrfs subvolume delete /mnt/.snapshots 2>/dev/null || rm -rf /mnt/.snapshots
+  fi
+  mkdir -p /mnt/.snapshots
+  mount -o compress=zstd,noatime,subvol=@snapshots "$DUALBOOT_ROOT_PART" /mnt/.snapshots
+  chmod 750 /mnt/.snapshots
+
+  arch-chroot /mnt systemctl enable snapper-timeline.timer snapper-cleanup.timer >/dev/null 2>&1 || true
+
+  echo "Dual-boot: snapper configured on @snapshots"
+}
+
 install_base_system() {
   # Initialize and populate the keyring
   pacman-key --init
@@ -134,7 +374,14 @@ install_base_system() {
   # Sync the offline database so pacman can find packages
   pacman -Sy --noconfirm
 
-  cleanup_install_disk "$(install_disk)"
+  if dualboot_enabled; then
+    # Only release a previous attempt's mounts. The rest of this disk belongs to
+    # other operating systems, so the whole-disk cleanup must not run.
+    findmnt -R /mnt >/dev/null && umount -R /mnt || true
+    prepare_dualboot_target
+  else
+    cleanup_install_disk "$(install_disk)"
+  fi
 
   # Workarounds for archinstall 4.2 regressions under Python 3.14:
   # 1. sync_log_to_install_medium: `self.target / absolute_logfile` drops
@@ -157,11 +404,19 @@ install_base_system() {
     --silent \
     --skip-ntp \
     --skip-wkd \
-    --skip-wifi-check
+    --skip-wifi-check \
+    --skip-boot
 
   # After archinstall sets up the base system but before our installer runs,
   # we need to ensure the offline pacman.conf is in place
   cp /etc/pacman.conf /mnt/etc/pacman.conf
+
+  # archinstall ran with "No bootloader" for an alongside install, so nothing has
+  # been written to the shared ESP yet. Do it ourselves, in our own EFI subdir.
+  if dualboot_enabled; then
+    install_dualboot_bootloader
+    configure_dualboot_snapper
+  fi
 
   # Mount the offline mirror so it's accessible in the chroot
   mkdir -p /mnt/var/cache/swarmarchy/mirror/offline

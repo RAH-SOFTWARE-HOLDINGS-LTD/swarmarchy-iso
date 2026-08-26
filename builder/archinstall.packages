@@ -11,6 +11,7 @@ efibootmgr         # create/edit UEFI boot entries during install
 openssh            # SSH server/client (remote install or post-install access)
 pipewire           # audio in the live environment
 snapper            # set up Btrfs snapshots at install time
+btrfs-progs        # mkfs.btrfs in the live ISO + btrfs tooling on the target
 
 # Removed for aarch64:
 #   amd-ucode, intel-ucode  -> x86 CPU microcode (n/a on ARM)

@@ -234,6 +234,44 @@ get_root_disk() {
   fi
 }
 
+# ── Dual-boot detection ──────────────────────────────────────────────────
+# Floor for an alongside install. plans/dual-boot.md sets 20 GiB as the
+# minimum usable root; we also carve our own 1 GiB ESP out of the same region.
+MIN_DUALBOOT_MIB=$((20 * 1024))
+DUALBOOT_ESP_MIB=1024
+
+# GPT type GUID that marks an EFI System Partition.
+ESP_TYPE_GUID="c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+
+# Print the first existing ESP on $1, or nothing.
+find_existing_esp() {
+  lsblk -rnpo PATH,PARTTYPE "$1" 2>/dev/null |
+    awk -v g="$ESP_TYPE_GUID" 'tolower($2) == g { print $1; exit }'
+}
+
+# Print "<start_mib> <end_mib> <size_mib>" for the largest free region on $1.
+# `parted -ms ... print free` emits free regions as `<n>:<start>:<end>:<size>:free;`.
+largest_free_region() {
+  parted -ms "$1" unit MiB print free 2>/dev/null |
+    awk -F: '$5 == "free;" {
+               s = $2; e = $3; z = $4
+               gsub(/MiB/, "", s); gsub(/MiB/, "", e); gsub(/MiB/, "", z)
+               if (z + 0 > best + 0) { best = z + 0; bs = s + 0; be = e + 0 }
+             }
+             END { if (best + 0 > 0) printf "%d %d %d\n", bs, be, best }'
+}
+
+# True when $1 can host an alongside install. We give Swarmarchy its OWN ESP
+# rather than sharing the one Windows uses, so the only requirement is enough
+# contiguous free space for that ESP plus a usable root. An existing ESP is a
+# good signal another OS lives here, but it is not required.
+dualboot_possible() {
+  local disk="$1" region
+  region=$(largest_free_region "$disk")
+  [[ -n $region ]] || return 1
+  (( $(awk '{ print $3 }' <<<"$region") >= MIN_DUALBOOT_MIB + DUALBOOT_ESP_MIB ))
+}
+
 disk_form() {
   step "Let's select where to install Swarmarchy..."
 
@@ -305,7 +343,63 @@ confirm_disk_overwrite() {
   done
 }
 
-while ! confirm_disk_overwrite; do
+install_mode_form() {
+  install_mode="erase"
+  dualboot_esp=""
+  dualboot_free_start_mib=""
+  dualboot_free_size_mib=""
+
+  # Nothing to preserve, or nowhere to put us -- only a full wipe is on offer.
+  dualboot_possible "$disk" || return 0
+
+  local region choice
+  region=$(largest_free_region "$disk")
+  read -r dualboot_free_start_mib _ dualboot_free_size_mib <<<"$region"
+  # Recorded only so the confirmation screen can say what else is on the disk.
+  dualboot_esp=$(find_existing_esp "$disk")
+
+  step "${disk} already has an operating system on it."
+
+  choice=$(
+    printf '%s\n%s\n' \
+      "Install alongside it, into the $((dualboot_free_size_mib / 1024))G of free space" \
+      "Erase the whole disk and install fresh" |
+      gum choose --header "How should Swarmarchy be installed?"
+  ) || abort
+
+  [[ $choice == Install* ]] && install_mode="dualboot"
+  return 0
+}
+
+confirm_dualboot() {
+  clear_logo
+  echo
+  gum style "Installing alongside your existing system."
+  echo
+  gum style --foreground 8 "Swarmarchy gets:  ${dualboot_free_size_mib}M of free space on ${disk}"
+  gum style --foreground 8 "                  (${DUALBOOT_ESP_MIB}M boot partition + the rest as root)"
+  gum style --foreground 8 "Untouched:        every existing partition, including ${dualboot_esp:-the existing boot partition}"
+  echo
+  gum style --foreground 8 "Disk encryption is not offered for alongside installs yet."
+  echo
+
+  gum confirm --affirmative "Yes, install alongside" --negative "No, change it" \
+    "Install into the free space on ${disk}?"
+}
+
+# Encryption only applies to the wipe path; the alongside path hands archinstall
+# an already-mounted tree, so there is no partition for it to encrypt.
+encrypt_installation=false
+
+while true; do
+  install_mode_form
+
+  if [[ $install_mode == "dualboot" ]]; then
+    confirm_dualboot && break
+  else
+    confirm_disk_overwrite && break
+  fi
+
   disk_form
 done
 
@@ -344,6 +438,23 @@ _EOF_
 
 printf '%s\n' "$encrypt_installation" >user_encrypt_installation.txt
 
+# Hand the chosen mode (and, for an alongside install, the target geometry) to
+# .automated_script.sh. pre_mounted_config expects a ready tree, so Step 5.2
+# does the partitioning/mkfs/mount itself using these values.
+printf '%s\n' "$install_mode" >user_install_mode.txt
+
+if [[ $install_mode == "dualboot" ]]; then
+  cat >user_dualboot.env <<EOF
+DUALBOOT_DISK=$disk
+DUALBOOT_ESP_MIB=$DUALBOOT_ESP_MIB
+DUALBOOT_FREE_START_MIB=$dualboot_free_start_mib
+DUALBOOT_FREE_SIZE_MIB=$dualboot_free_size_mib
+DUALBOOT_OTHER_ESP=$dualboot_esp
+EOF
+else
+  rm -f user_dualboot.env
+fi
+
 # Setup partition layout
 disk_size=$(lsblk -bdno SIZE "$disk")
 mib=$((1024 * 1024))
@@ -380,15 +491,27 @@ else
   disk_encryption_config=""
 fi
 
-cat <<-_EOF_ >user_configuration.json
+# Assemble disk_config. The wipe path keeps archinstall's default_layout (it
+# partitions the disk itself). The alongside path uses pre_mounted_config, where
+# archinstall skips mount_ordered_layout() entirely and adopts whatever tree
+# .automated_script.sh has already mounted at /mnt -- verified in archinstall 4.4
+# scripts/guided.py:86 and lib/models/device.py:133.
+if [[ $install_mode == "dualboot" ]]; then
+  # "No bootloader" is only an accepted value when archinstall is also invoked
+  # with --skip-boot (lib/models/bootloader.py:53). We install Limine ourselves
+  # into its own ESP subdirectory so the shared Windows ESP is never rewritten.
+  bootloader_choice="No bootloader"
+  disk_config_json=$(cat <<-_EOF_
 {
-    "app_config": null,
-    "archinstall-language": "English",
-    "auth_config": {},
-    "audio_config": { "audio": "pipewire" },
-    "bootloader": "Limine",
-    "custom_commands": [],
-    "disk_config": {
+        "config_type": "pre_mounted_config",
+        "mountpoint": "/mnt"
+    }
+_EOF_
+  )
+else
+  bootloader_choice="Limine"
+  disk_config_json=$(cat <<-_EOF_
+{
         "btrfs_options": { 
           "snapshot_config": {
             "type": "Snapper"
@@ -450,7 +573,20 @@ cat <<-_EOF_ >user_configuration.json
                 "wipe": true
             }
         ]$disk_encryption_config
-    },
+    }
+_EOF_
+  )
+fi
+
+cat <<-_EOF_ >user_configuration.json
+{
+    "app_config": null,
+    "archinstall-language": "English",
+    "auth_config": {},
+    "audio_config": { "audio": "pipewire" },
+    "bootloader": "$bootloader_choice",
+    "custom_commands": [],
+    "disk_config": $disk_config_json,
     "hostname": "$hostname",
     "kernels": [ "$kernel_choice" ],
     "network_config": { "type": "iso" },
@@ -504,5 +640,13 @@ if [[ $1 == "dry" ]]; then
   echo -e "\nDisk Encryption:"
   cat user_encrypt_installation.txt
 
-  rm user_configuration.json user_credentials.json user_full_name.txt user_email_address.txt user_encrypt_installation.txt
+  echo -e "\nInstall Mode:"
+  cat user_install_mode.txt
+
+  if [[ -f user_dualboot.env ]]; then
+    echo -e "\nDual-boot Target:"
+    cat user_dualboot.env
+  fi
+
+  rm -f user_configuration.json user_credentials.json user_full_name.txt user_email_address.txt user_encrypt_installation.txt user_install_mode.txt user_dualboot.env
 fi
