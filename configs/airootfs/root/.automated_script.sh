@@ -254,8 +254,23 @@ install_dualboot_bootloader() {
   local esp_dir="/mnt/boot/EFI/swarmarchy"
   local loader='\EFI\swarmarchy\BOOTAA64.EFI'
 
+  # limine is NOT installed in the live ISO, only in the offline mirror, and
+  # archinstall skipped it because we asked for "No bootloader". Install it into
+  # the target: we need its EFI binary now, and the target needs the package
+  # anyway for 99-limine.hook and the layer's later limine-update.
+  if ! arch-chroot /mnt pacman -S --noconfirm --needed limine efibootmgr; then
+    echo "Dual-boot: failed to install limine into the target" >&2
+    return 1
+  fi
+
+  local limine_efi="/mnt/usr/share/limine/BOOTAA64.EFI"
+  if [[ ! -f $limine_efi ]]; then
+    echo "Dual-boot: $limine_efi missing after installing limine" >&2
+    return 1
+  fi
+
   mkdir -p "$esp_dir"
-  cp /usr/share/limine/BOOTAA64.EFI "$esp_dir/BOOTAA64.EFI"
+  cp "$limine_efi" "$esp_dir/BOOTAA64.EFI"
 
   # Board-gated kernel arguments. These are what the Yoga Slim 7x needs to boot;
   # on anything else only the generic root= arguments are used.
@@ -411,13 +426,6 @@ install_base_system() {
   # we need to ensure the offline pacman.conf is in place
   cp /etc/pacman.conf /mnt/etc/pacman.conf
 
-  # archinstall ran with "No bootloader" for an alongside install, so nothing has
-  # been written to the shared ESP yet. Do it ourselves, in our own EFI subdir.
-  if dualboot_enabled; then
-    install_dualboot_bootloader
-    configure_dualboot_snapper
-  fi
-
   # Mount the offline mirror so it's accessible in the chroot
   mkdir -p /mnt/var/cache/swarmarchy/mirror/offline
   mount --bind /var/cache/swarmarchy/mirror/offline /mnt/var/cache/swarmarchy/mirror/offline
@@ -425,6 +433,15 @@ install_base_system() {
   # Mount the packages dir so it's accessible in the chroot
   mkdir -p /mnt/opt/packages
   mount --bind /opt/packages /mnt/opt/packages
+
+  # archinstall ran with "No bootloader" for an alongside install, so nothing has
+  # been written to the ESP yet. Do it ourselves. This has to come AFTER the
+  # offline mirror is bind-mounted: it installs limine into the target via
+  # pacman in the chroot.
+  if dualboot_enabled; then
+    install_dualboot_bootloader
+    configure_dualboot_snapper
+  fi
 
   # No need to ask for sudo during the installation (swarmarchy itself responsible for removing after install)
   mkdir -p /mnt/etc/sudoers.d
