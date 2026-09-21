@@ -107,7 +107,13 @@ cp "/tmp/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
 
 # Add our additional packages to the live ISO package list.
 # aarch64: dropped `linux-t2` (Apple) and `plymouth`.
-arch_packages=(git gum jq openssl tzupdate lvm2 cryptsetup parted)
+# NOTE: this list is the LIVE ISO environment only. builder/archinstall.packages and the
+# swarmarchy-*.packages lists below feed the offline mirror and the TARGET install -- a package
+# listed there is NOT available to scripts running in the live installer.
+# archlinuxarm-keyring: .automated_script.sh runs `pacman-key --populate archlinuxarm`, which
+# reads /usr/share/pacman/keyrings/archlinuxarm.gpg. Without the package that file is absent,
+# the command exits non-zero, and `set -euo pipefail` aborts the install.
+arch_packages=(git gum jq openssl tzupdate lvm2 cryptsetup parted archlinuxarm-keyring)
 printf '%s\n' "${arch_packages[@]}" >>"$build_cache_dir/packages.$ARCH"
 
 # Build list of all the packages needed for the offline mirror
