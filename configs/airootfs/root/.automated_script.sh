@@ -204,7 +204,7 @@ prepare_dualboot_target() {
   mkfs.btrfs -f -L swarmarchy "$root_part"
 
   # Subvolume layout mirrors the wipe path so snapshots/rollback behave the same.
-  mount "$root_part" /mnt
+  mount -t btrfs "$root_part" /mnt
   local sv
   for sv in @ @home @log @pkg @snapshots; do
     btrfs subvolume create "/mnt/$sv"
@@ -212,16 +212,16 @@ prepare_dualboot_target() {
   umount /mnt
 
   local opts="compress=zstd,noatime"
-  mount -o "$opts,subvol=@" "$root_part" /mnt
+  mount -t btrfs -o "$opts,subvol=@" "$root_part" /mnt
   mkdir -p /mnt/home /mnt/var/log /mnt/var/cache/pacman/pkg /mnt/.snapshots /mnt/boot
-  mount -o "$opts,subvol=@home" "$root_part" /mnt/home
-  mount -o "$opts,subvol=@log" "$root_part" /mnt/var/log
-  mount -o "$opts,subvol=@pkg" "$root_part" /mnt/var/cache/pacman/pkg
-  mount -o "$opts,subvol=@snapshots" "$root_part" /mnt/.snapshots
+  mount -t btrfs -o "$opts,subvol=@home" "$root_part" /mnt/home
+  mount -t btrfs -o "$opts,subvol=@log" "$root_part" /mnt/var/log
+  mount -t btrfs -o "$opts,subvol=@pkg" "$root_part" /mnt/var/cache/pacman/pkg
+  mount -t btrfs -o "$opts,subvol=@snapshots" "$root_part" /mnt/.snapshots
 
   # Limine reads only FAT/ISO9660, so the kernel, initramfs, DTB and UKIs all
   # have to live on the ESP rather than on Btrfs. This is ours alone.
-  mount "$esp_part" /mnt/boot
+  mount -t vfat "$esp_part" /mnt/boot
 
   DUALBOOT_ROOT_PART="$root_part"
   DUALBOOT_ROOT_UUID=$(blkid -s UUID -o value "$root_part")
@@ -333,6 +333,12 @@ EOF
   prev_order=$(efibootmgr | awk -F': *' '/^BootOrder:/ {print $2}')
 
   if [[ -n $esp_partnum ]]; then
+    # Drop any Swarmarchy entry from an earlier attempt, otherwise each re-install
+    # leaves another duplicate behind ("Boot000X has same label Swarmarchy").
+    while read -r old_num; do
+      [[ -n $old_num ]] && efibootmgr -b "$old_num" -B >/dev/null 2>&1 || true
+    done < <(efibootmgr | awk '/^Boot[0-9A-Fa-f]{4}\*? Swarmarchy$/ {print substr($1,5,4)}')
+
     efibootmgr --create --disk "$esp_disk" --part "$esp_partnum" \
       --label "Swarmarchy" --loader "$loader" --unicode >/dev/null || true
 
@@ -353,7 +359,7 @@ EOF
 # wipe install. Non-fatal: a missing snapper config does not stop the machine
 # from booting.
 configure_dualboot_snapper() {
-  arch-chroot /mnt command -v snapper >/dev/null 2>&1 || {
+  arch-chroot /mnt sh -c 'command -v snapper' >/dev/null 2>&1 || {
     echo "Dual-boot: snapper not present, skipping snapshot config" >&2
     return 0
   }
@@ -517,6 +523,10 @@ chroot_bash() {
 }
 
 if [[ $(tty) == "/dev/tty1" ]]; then
+  # The installer draws a TUI here. Kernel messages print straight to the console
+  # and scribble over it, which makes the log unreadable. Keep emergencies only.
+  dmesg -n 1 2>/dev/null || true
+
   use_swarmarchy_helpers
   run_configurator
   install_arch
