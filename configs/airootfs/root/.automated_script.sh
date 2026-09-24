@@ -35,7 +35,6 @@ install_swarmarchy() {
   chroot_bash -lc "sudo pacman -S --noconfirm --needed gum" >/dev/null
   chroot_bash -lc "source /home/$SWARMARCHY_USER/.local/share/swarmarchy/install.sh || bash"
 
-  configure_login_for_unencrypted_install
 
   # Reboot if requested by installer
   if [[ -f /mnt/var/tmp/swarmarchy-install-completed ]]; then
@@ -476,39 +475,6 @@ EOF
   swarmarchy-stage-qcom-firmware /mnt || true
 }
 
-configure_login_for_unencrypted_install() {
-  if [[ $(<user_encrypt_installation.txt) != "false" ]]; then
-    return
-  fi
-
-  # Unencrypted installs must stop at SDDM so the user password is entered
-  # before reaching the desktop. Swarmarchy's normal encrypted path may autologin
-  # because the disk password was already entered at boot.
-  #
-  # Keep the Swarmarchy SDDM theme and seed SDDM's last user/session state so
-  # first boot looks like the SDDM screen shown after logging out of Swarmarchy.
-  mkdir -p /mnt/etc/sddm.conf.d
-  rm -f /mnt/etc/sddm.conf.d/autologin.conf
-  cat >/mnt/etc/sddm.conf.d/99-swarmarchy-login.conf <<EOF
-[Theme]
-Current=swarmarchy
-
-[Users]
-RememberLastUser=true
-RememberLastSession=true
-EOF
-
-  mkdir -p /mnt/var/lib/sddm
-  cat >/mnt/var/lib/sddm/state.conf <<EOF
-[Last]
-Session=swarmarchy.desktop
-User=$SWARMARCHY_USER
-EOF
-
-  rm -f /mnt/etc/systemd/system/getty@tty1.service.d/autologin.conf
-  arch-chroot /mnt chown sddm:sddm /var/lib/sddm /var/lib/sddm/state.conf >/dev/null 2>&1 || true
-  arch-chroot /mnt systemctl enable sddm.service >/dev/null 2>&1 || true
-}
 
 chroot_bash() {
   HOME=/home/$SWARMARCHY_USER \
@@ -523,9 +489,13 @@ chroot_bash() {
 }
 
 if [[ $(tty) == "/dev/tty1" ]]; then
-  # The installer draws a TUI here. Kernel messages print straight to the console
-  # and scribble over it, which makes the log unreadable. Keep emergencies only.
-  dmesg -n 1 2>/dev/null || true
+  # The installer paints a fixed log pane here using save/restore-cursor. Kernel
+  # messages go to the same tty at column 0, which both interleaves with that pane
+  # and invalidates the saved cursor position, so the output jumps between the
+  # middle and the left edge. Stop printk reaching THIS console; --msglevel (the
+  # actual log level) is deliberately left alone, so nothing is filtered out and
+  # dmesg/journalctl still have everything.
+  setterm --msg off 2>/dev/null || true
 
   use_swarmarchy_helpers
   run_configurator
