@@ -130,7 +130,43 @@ cleanup_install_disk() {
 # it does NO partitioning, formatting or mounting -- everything below is ours.
 
 dualboot_enabled() {
-  [[ -f user_install_mode.txt && $(<user_install_mode.txt) == "dualboot" ]]
+  [[ -f user_install_mode.txt ]] || return 1
+  local m; m=$(<user_install_mode.txt)
+  [[ $m == "dualboot" || $m == "reuse" ]]
+}
+
+mount_dualboot_tree() {
+  local esp_part="$1" root_part="$2"
+
+  # Lay out the subvolumes on the freshly made filesystem. Deliberately NO
+  # @snapshots: snapper's own create-config (run later by the layer's
+  # install/login/limine-snapper.sh) makes .snapshots itself and fails outright
+  # if something already occupies that path.
+  mount -t btrfs "$root_part" /mnt
+  local sv
+  for sv in @ @home @log @pkg; do
+    btrfs subvolume create "/mnt/$sv"
+  done
+  umount /mnt
+
+  local opts="compress=zstd,noatime"
+  mount -t btrfs -o "$opts,subvol=@" "$root_part" /mnt
+  mkdir -p /mnt/home /mnt/var/log /mnt/var/cache/pacman/pkg /mnt/boot
+  mount -t btrfs -o "$opts,subvol=@home" "$root_part" /mnt/home
+  mount -t btrfs -o "$opts,subvol=@log" "$root_part" /mnt/var/log
+  mount -t btrfs -o "$opts,subvol=@pkg" "$root_part" /mnt/var/cache/pacman/pkg
+
+  # Limine reads only FAT/ISO9660, so the kernel, initramfs, DTB and UKIs all
+  # have to live on the ESP rather than on Btrfs. This is ours alone.
+  mount -t vfat "$esp_part" /mnt/boot
+
+  DUALBOOT_ROOT_PART="$root_part"
+  DUALBOOT_ROOT_UUID=$(blkid -s UUID -o value "$root_part")
+  DUALBOOT_ESP="$esp_part"
+  export DUALBOOT_ROOT_PART DUALBOOT_ROOT_UUID DUALBOOT_ESP
+
+  echo "Dual-boot: mounted tree"
+  findmnt -R /mnt -o TARGET,SOURCE,FSTYPE,OPTIONS
 }
 
 # Create the root partition inside the free region the configurator measured,
@@ -139,6 +175,24 @@ dualboot_enabled() {
 prepare_dualboot_target() {
   # shellcheck source=/dev/null
   source user_dualboot.env
+
+  # Reinstalling over a previous Swarmarchy: the partitions already exist and the
+  # user confirmed exactly which two get reformatted, so wipe those and skip all
+  # partition-table work.
+  if [[ -n ${DUALBOOT_REUSE_ROOT:-} ]]; then
+    local esp_part="$DUALBOOT_REUSE_ESP" root_part="$DUALBOOT_REUSE_ROOT"
+    echo "Dual-boot: reinstalling over $root_part (ESP $esp_part); partition table untouched"
+
+    swapoff -a 2>/dev/null || true
+    umount -R /mnt 2>/dev/null || true
+    wipefs -a "$esp_part" >/dev/null
+    wipefs -a "$root_part" >/dev/null
+    mkfs.vfat -F32 -n SWARMBOOT "$esp_part"
+    mkfs.btrfs -f -L swarmarchy "$root_part"
+
+    mount_dualboot_tree "$esp_part" "$root_part"
+    return 0
+  fi
 
   local end_mib=$((DUALBOOT_FREE_START_MIB + DUALBOOT_FREE_SIZE_MIB))
 
@@ -203,32 +257,7 @@ prepare_dualboot_target() {
   mkfs.btrfs -f -L swarmarchy "$root_part"
 
   # Subvolume layout mirrors the wipe path so snapshots/rollback behave the same.
-  mount -t btrfs "$root_part" /mnt
-  local sv
-  for sv in @ @home @log @pkg @snapshots; do
-    btrfs subvolume create "/mnt/$sv"
-  done
-  umount /mnt
-
-  local opts="compress=zstd,noatime"
-  mount -t btrfs -o "$opts,subvol=@" "$root_part" /mnt
-  mkdir -p /mnt/home /mnt/var/log /mnt/var/cache/pacman/pkg /mnt/.snapshots /mnt/boot
-  mount -t btrfs -o "$opts,subvol=@home" "$root_part" /mnt/home
-  mount -t btrfs -o "$opts,subvol=@log" "$root_part" /mnt/var/log
-  mount -t btrfs -o "$opts,subvol=@pkg" "$root_part" /mnt/var/cache/pacman/pkg
-  mount -t btrfs -o "$opts,subvol=@snapshots" "$root_part" /mnt/.snapshots
-
-  # Limine reads only FAT/ISO9660, so the kernel, initramfs, DTB and UKIs all
-  # have to live on the ESP rather than on Btrfs. This is ours alone.
-  mount -t vfat "$esp_part" /mnt/boot
-
-  DUALBOOT_ROOT_PART="$root_part"
-  DUALBOOT_ROOT_UUID=$(blkid -s UUID -o value "$root_part")
-  DUALBOOT_ESP="$esp_part"
-  export DUALBOOT_ROOT_PART DUALBOOT_ROOT_UUID DUALBOOT_ESP
-
-  echo "Dual-boot: mounted tree"
-  findmnt -R /mnt -o TARGET,SOURCE,FSTYPE,OPTIONS
+  mount_dualboot_tree "$esp_part" "$root_part"
 }
 
 # Keep the ESP small: linux-aarch64 ships ~120MiB of device trees, but a given
@@ -352,38 +381,6 @@ EOF
   echo "Dual-boot: Limine installed to EFI/swarmarchy (Windows entries untouched)"
 }
 
-# archinstall's Snapper support is part of its btrfs_options, which the
-# pre_mounted_config path never reads (device.py returns early for Pre_mount).
-# Set it up ourselves so an alongside install gets the same rollback story as a
-# wipe install. Non-fatal: a missing snapper config does not stop the machine
-# from booting.
-configure_dualboot_snapper() {
-  arch-chroot /mnt sh -c 'command -v snapper' >/dev/null 2>&1 || {
-    echo "Dual-boot: snapper not present, skipping snapshot config" >&2
-    return 0
-  }
-
-  # create-config insists on making /.snapshots itself, so hand it a clean path
-  # and then swap our @snapshots subvolume back in underneath.
-  umount /mnt/.snapshots 2>/dev/null || true
-  rmdir /mnt/.snapshots 2>/dev/null || true
-
-  if ! arch-chroot /mnt snapper --no-dbus -c root create-config /; then
-    echo "Dual-boot: snapper create-config failed, continuing" >&2
-  fi
-
-  # Drop the subvolume create-config just made and restore ours.
-  if [[ -d /mnt/.snapshots ]]; then
-    btrfs subvolume delete /mnt/.snapshots 2>/dev/null || rm -rf /mnt/.snapshots
-  fi
-  mkdir -p /mnt/.snapshots
-  mount -o compress=zstd,noatime,subvol=@snapshots "$DUALBOOT_ROOT_PART" /mnt/.snapshots
-  chmod 750 /mnt/.snapshots
-
-  arch-chroot /mnt systemctl enable snapper-timeline.timer snapper-cleanup.timer >/dev/null 2>&1 || true
-
-  echo "Dual-boot: snapper configured on @snapshots"
-}
 
 install_base_system() {
   # Initialize and populate the keyring
@@ -445,7 +442,6 @@ install_base_system() {
   # pacman in the chroot.
   if dualboot_enabled; then
     install_dualboot_bootloader
-    configure_dualboot_snapper
   fi
 
   # No need to ask for sudo during the installation (swarmarchy itself responsible for removing after install)
