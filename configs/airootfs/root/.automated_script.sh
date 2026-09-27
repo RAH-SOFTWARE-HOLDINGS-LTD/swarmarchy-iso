@@ -365,12 +365,12 @@ EOF
     # leaves another duplicate behind ("Boot000X has same label Swarmarchy").
     while read -r old_num; do
       [[ -n $old_num ]] && efibootmgr -b "$old_num" -B >/dev/null 2>&1 || true
-    done < <(efibootmgr | awk '/^Boot[0-9A-Fa-f]{4}\*? Swarmarchy$/ {print substr($1,5,4)}')
+    done < <(efibootmgr | awk -F'\t' '$1 ~ /^Boot[0-9A-Fa-f]{4}\*? Swarmarchy$/ {print substr($1,5,4)}')
 
     efibootmgr --create --disk "$esp_disk" --part "$esp_partnum" \
       --label "Swarmarchy" --loader "$loader" --unicode >/dev/null || true
 
-    new_num=$(efibootmgr | awk '/^Boot[0-9A-Fa-f]{4}\*? Swarmarchy$/ {print substr($1,5,4); exit}')
+    new_num=$(efibootmgr | awk -F'\t' '$1 ~ /^Boot[0-9A-Fa-f]{4}\*? Swarmarchy$/ {print substr($1,5,4); exit}')
     if [[ -n $new_num && -n $prev_order ]]; then
       efibootmgr --bootorder "${prev_order},${new_num}" >/dev/null || true
     fi
