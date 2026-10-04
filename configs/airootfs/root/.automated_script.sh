@@ -267,12 +267,15 @@ limit_target_dtbs() {
   local keep="$1"
   [[ -n $keep ]] || return 0
 
-  cat >>/mnt/etc/pacman.conf <<EOF
+  # NoExtract is an [options] directive. Appending to the end of the file puts it
+  # inside whatever repo section happens to be last, where pacman ignores it with
+  # "directive 'NoExtract' in section 'offline' not recognized" -- so insert it
+  # directly after the [options] header instead.
+  sed -i "/^\[options\]/a \\\n# Swarmarchy: keep only this board's device tree on the ESP.\nNoExtract = boot/dtbs/*\nNoExtract = !$keep" /mnt/etc/pacman.conf
 
-# Swarmarchy: keep only this board's device tree on the shared ESP.
-NoExtract = boot/dtbs/*
-NoExtract = !$keep
-EOF
+  if ! grep -A6 '^\[options\]' /mnt/etc/pacman.conf | grep -q "^NoExtract = boot/dtbs/\*"; then
+    echo "Dual-boot: WARNING - NoExtract rule did not land in [options]" >&2
+  fi
 }
 
 # Install Limine into its OWN directory on the shared ESP and register it with
