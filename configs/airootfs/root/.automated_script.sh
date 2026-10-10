@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Where the source tree is staged during the install: a transient path inside the
+# target, wiped by post-install/cleanup-source.sh. SWARMARCHY_SRC is that path as
+# seen from inside the chroot; SWARMARCHY_SRC_TARGET is the same place from the ISO.
+SWARMARCHY_SRC="/tmp/swarmarchy-src"
+SWARMARCHY_SRC_TARGET="/mnt${SWARMARCHY_SRC}"
+
 use_swarmarchy_helpers() {
   export SWARMARCHY_PATH="/root/swarmarchy"
   export SWARMARCHY_INSTALL="/root/swarmarchy/install"
@@ -33,7 +39,7 @@ install_arch() {
 
 install_swarmarchy() {
   chroot_bash -lc "sudo pacman -S --noconfirm --needed gum" >/dev/null
-  chroot_bash -lc "source /home/$SWARMARCHY_USER/.local/share/swarmarchy/install.sh || bash"
+  chroot_bash -lc "SWARMARCHY_PATH=$SWARMARCHY_SRC source $SWARMARCHY_SRC/install.sh || bash"
 
 
   # Reboot if requested by installer
@@ -456,16 +462,18 @@ $SWARMARCHY_USER ALL=(ALL:ALL) NOPASSWD: ALL
 EOF
   chmod 440 /mnt/etc/sudoers.d/99-swarmarchy-installer
 
-  # Copy the local swarmarchy repo to the user's home directory
-  mkdir -p /mnt/home/$SWARMARCHY_USER/.local/share/
-  cp -r /root/swarmarchy /mnt/home/$SWARMARCHY_USER/.local/share/
-
-  chown -R 1000:1000 /mnt/home/$SWARMARCHY_USER/.local/
+  # Stage the swarmarchy source in a transient location, NOT the user's home.
+  # It comes off this USB -- never a git clone -- is only a build input, and
+  # install/post-install/cleanup-source.sh deletes it when the install finishes.
+  # An installed system must carry no copy of the repo: config/deploy.sh ships the
+  # output to /usr and /etc/skel, and that is the only thing left behind.
+  mkdir -p /mnt/tmp
+  cp -r /root/swarmarchy "$SWARMARCHY_SRC_TARGET"
+  chown -R 1000:1000 "$SWARMARCHY_SRC_TARGET"
 
   # Ensure all necessary scripts are executable
-  find /mnt/home/$SWARMARCHY_USER/.local/share/swarmarchy -type f -path "*/bin/*" -exec chmod +x {} \;
-  chmod +x /mnt/home/$SWARMARCHY_USER/.local/share/swarmarchy/boot.sh 2>/dev/null || true
-  find /mnt/home/$SWARMARCHY_USER/.local/share/swarmarchy/default/waybar -type f -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
+  find "$SWARMARCHY_SRC_TARGET" -type f -path "*/bin/*" -exec chmod +x {} \;
+  find "$SWARMARCHY_SRC_TARGET/default/waybar" -type f -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
 
   # Stage the per-machine Qualcomm X Elite board firmware onto the new root. Licensing forbids
   # shipping it in the ISO, so this sources the five board blobs from a user-staged qcom-firmware/
