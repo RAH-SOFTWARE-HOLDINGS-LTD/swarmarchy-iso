@@ -4,7 +4,10 @@ set -euo pipefail
 # Where the source tree is staged during the install: a transient path inside the
 # target, wiped by post-install/cleanup-source.sh. SWARMARCHY_SRC is that path as
 # seen from inside the chroot; SWARMARCHY_SRC_TARGET is the same place from the ISO.
-SWARMARCHY_SRC="/tmp/swarmarchy-src"
+# NOT /tmp: arch-chroot mounts a fresh tmpfs over the target's /tmp
+# ("chroot_add_mount tmp "$1/tmp" -t tmpfs"), so anything staged there is
+# invisible once the install enters the chroot. /var/tmp is left alone.
+SWARMARCHY_SRC="/var/tmp/swarmarchy-src"
 SWARMARCHY_SRC_TARGET="/mnt${SWARMARCHY_SRC}"
 
 use_swarmarchy_helpers() {
@@ -467,7 +470,7 @@ EOF
   # install/post-install/cleanup-source.sh deletes it when the install finishes.
   # An installed system must carry no copy of the repo: config/deploy.sh ships the
   # output to /usr and /etc/skel, and that is the only thing left behind.
-  mkdir -p /mnt/tmp
+  mkdir -p /mnt/var/tmp
   cp -r /root/swarmarchy "$SWARMARCHY_SRC_TARGET"
   chown -R 1000:1000 "$SWARMARCHY_SRC_TARGET"
 
