@@ -38,6 +38,36 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Install-failure log upload (see log-worker/README.md). The endpoint URL and upload token are
+# REQUIRED and get baked into the ISO. Each comes from the environment, or else from the
+# gitignored .log-upload.env at the repo root (SWARMARCHY_LOG_UPLOAD_URL=... / ..._TOKEN=...).
+# Checked first so a missing value fails now, not after a long build.
+ISO_ROOT=$(realpath "${BASH_SOURCE[0]%/*}/..")
+LOG_UPLOAD_ENV="$ISO_ROOT/.log-upload.env"
+file_url="" file_token=""
+if [[ -r $LOG_UPLOAD_ENV ]]; then
+  [[ $(stat -c %a "$LOG_UPLOAD_ENV") =~ ^[0-7]00$ ]] ||
+    echo "warning: $LOG_UPLOAD_ENV is readable by others; run: chmod 600 $LOG_UPLOAD_ENV" >&2
+  file_url=$(set +u; source "$LOG_UPLOAD_ENV" >/dev/null 2>&1; printf '%s' "${SWARMARCHY_LOG_UPLOAD_URL-}")
+  file_token=$(set +u; source "$LOG_UPLOAD_ENV" >/dev/null 2>&1; printf '%s' "${SWARMARCHY_LOG_UPLOAD_TOKEN-}")
+fi
+export SWARMARCHY_LOG_UPLOAD_URL="${SWARMARCHY_LOG_UPLOAD_URL:-$file_url}"
+export SWARMARCHY_LOG_UPLOAD_TOKEN="${SWARMARCHY_LOG_UPLOAD_TOKEN:-$file_token}"
+unset file_url file_token
+if [[ -z $SWARMARCHY_LOG_UPLOAD_URL || -z $SWARMARCHY_LOG_UPLOAD_TOKEN ]]; then
+  cat >&2 <<MSG
+Error: the log upload URL and token are required to build the ISO.
+Set SWARMARCHY_LOG_UPLOAD_URL and SWARMARCHY_LOG_UPLOAD_TOKEN in the environment, or create
+$LOG_UPLOAD_ENV (chmod 600) containing:
+
+  SWARMARCHY_LOG_UPLOAD_URL=https://your-worker.example.workers.dev/
+  SWARMARCHY_LOG_UPLOAD_TOKEN=the-token-you-set-with-wrangler-secret-put
+
+See log-worker/README.md.
+MSG
+  exit 1
+fi
+
 # Clear out old packages
 sudo rm -rf /var/cache/pacman/pkg/*
 
@@ -73,6 +103,9 @@ DOCKER_ARGS=(
   -e "SWARMARCHY_INSTALLER_REPO=$SWARMARCHY_INSTALLER_REPO"
   -e "SWARMARCHY_INSTALLER_REF=$SWARMARCHY_INSTALLER_REF"
   -e "SWARMARCHY_MIRROR=$SWARMARCHY_MIRROR"
+  # No value: docker copies these from our environment, so the token never appears on a command line.
+  -e SWARMARCHY_LOG_UPLOAD_URL
+  -e SWARMARCHY_LOG_UPLOAD_TOKEN
   -e "HOST_UID=$(id -u)"
   -e "HOST_GID=$(id -g)"
   -v "$BUILD_RELEASE_PATH/:/out/"

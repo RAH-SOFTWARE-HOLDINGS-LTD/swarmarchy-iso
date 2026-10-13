@@ -1,0 +1,10 @@
+name = "swarmarchy-logs"
+main = "worker.mjs"
+compatibility_date = "2025-06-01"
+
+[[r2_buckets]]
+binding = "LOGS"
+bucket_name = "swarmarchy-logs"
+
+# Secret, set once with: npx wrangler secret put UPLOAD_TOKEN
+# (never put the token in this file)

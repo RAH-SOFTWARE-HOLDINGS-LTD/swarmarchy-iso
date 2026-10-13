@@ -25,3 +25,9 @@ SWARMARCHY_INSTALLER_REPO="myuser/swarmarchy-fork" SWARMARCHY_INSTALLER_REF="som
 ## Testing the ISO
 
 Run `./bin/swarmarchy-iso-boot [release/swarmarchy.iso]`.
+
+## Install-failure log upload
+
+Failed installs can upload their logs to your own Cloudflare Worker so you can read them on
+another computer. The URL and upload token are **required** to build the ISO (environment
+variables, or a gitignored `.log-upload.env`). Setup and trade-offs: `log-worker/README.md`.

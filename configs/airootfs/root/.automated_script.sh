@@ -15,6 +15,10 @@ use_swarmarchy_helpers() {
   export SWARMARCHY_INSTALL="/root/swarmarchy/install"
   export SWARMARCHY_INSTALL_LOG_FILE="/var/log/swarmarchy-install.log"
   export SWARMARCHY_MIRROR="$(cat /root/swarmarchy_mirror)"
+  if [[ -r /root/swarmarchy_log_upload ]]; then
+    source /root/swarmarchy_log_upload
+    export SWARMARCHY_LOG_UPLOAD_URL SWARMARCHY_LOG_UPLOAD_TOKEN
+  fi
   source /root/swarmarchy/install/helpers/all.sh
 }
 
@@ -493,6 +497,8 @@ chroot_bash() {
     SWARMARCHY_USER_NAME="$(<user_full_name.txt)" \
     SWARMARCHY_USER_EMAIL="$(<user_email_address.txt)" \
     SWARMARCHY_MIRROR="$SWARMARCHY_MIRROR" \
+    SWARMARCHY_LOG_UPLOAD_URL="${SWARMARCHY_LOG_UPLOAD_URL-}" \
+    SWARMARCHY_LOG_UPLOAD_TOKEN="${SWARMARCHY_LOG_UPLOAD_TOKEN-}" \
     USER="$SWARMARCHY_USER" \
     HOME="/home/$SWARMARCHY_USER" \
     /bin/bash "$@"
