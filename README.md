@@ -25,15 +25,3 @@ SWARMARCHY_INSTALLER_REPO="myuser/swarmarchy-fork" SWARMARCHY_INSTALLER_REF="som
 ## Testing the ISO
 
 Run `./bin/swarmarchy-iso-boot [release/swarmarchy.iso]`.
-
-## Signing the ISO
-
-Run `./bin/swarmarchy-iso-sign [gpg-user] [release/swarmarchy.iso]`.
-
-## Uploading the ISO
-
-Run `./bin/swarmarchy-iso-upload [release/swarmarchy.iso]`. This requires you've configured rclone (use `rclone config`).
-
-## Full release of the ISO
-
-Run `./bin/swarmarchy-iso-release VERSION` to create, test, sign, and upload the ISO in one flow. Add `--rc` to release an RC build instead.

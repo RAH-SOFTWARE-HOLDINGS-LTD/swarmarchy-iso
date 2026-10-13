@@ -106,14 +106,7 @@ Detect arch from the ISO filename (or accept a flag) and switch:
 
 Both scripts hardcode the OVMF path; small, mechanical fix.
 
-### 10. Release script — `bin/swarmarchy-iso-release:52`
-
-```bash
-latest_iso=$(\ls -t "$BUILD_RELEASE_PATH"/*x86_64-"$INSTALLER_REF".iso | head -n1)
-```
-Hardcoded `x86_64` glob. Take an arch arg, or do `*${SWARMARCHY_ARCH}-${INSTALLER_REF}.iso`. The ISO filename already contains arch (set by archiso from `profiledef.sh`), so this just needs the glob parameterized.
-
-### 11. CI — `.github/workflows/nightly-build.yml`
+### 10. CI — `.github/workflows/nightly-build.yml`
 
 Add a matrix:
 ```yaml
@@ -138,7 +131,6 @@ Code:
 - `bin/swarmarchy-iso-make` — add `--arch` flag, branch docker image/platform
 - `bin/swarmarchy-iso-boot` — branch QEMU binary + OVMF path
 - `bin/swarmarchy-vm` — same as iso-boot
-- `bin/swarmarchy-iso-release` — parameterize ISO glob
 - `builder/build-iso.sh` — main branching: Node.js URL, package list filename, releng overlay fixups, kernel package
 - `builder/archinstall.packages` — filter microcode on aarch64 (sentinel comments + filter step)
 - `configs/profiledef.sh` — env-driven `arch` + BCJ filter + bootmodes
