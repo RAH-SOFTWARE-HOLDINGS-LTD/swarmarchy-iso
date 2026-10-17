@@ -68,6 +68,15 @@ MSG
   exit 1
 fi
 
+# Warn (never block) when the R2 packages or the vendored gpakosz tmux config are behind upstream.
+# Refreshing them is a manual decision; see swarmarchy-dev-upstream-check.
+upstream_check=$(command -v swarmarchy-dev-upstream-check || echo "${SWARMARCHY_REPO:-$HOME/.local/share/swarmarchy}/bin/swarmarchy-dev-upstream-check")
+if [[ -x $upstream_check ]]; then
+  echo "=== Upstream check (warning only) ==="
+  "$upstream_check" || true
+  echo "====================================="
+fi
+
 # Clear out old packages
 sudo rm -rf /var/cache/pacman/pkg/*
 
