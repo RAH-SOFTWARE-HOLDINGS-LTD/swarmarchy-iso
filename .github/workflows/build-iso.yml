@@ -64,18 +64,12 @@ jobs:
         run: mkdir -p release
 
       - name: Build ISO in privileged Arch (ARM) container
-        env:
-          # Required by the build. Add both as repository secrets.
-          SWARMARCHY_LOG_UPLOAD_URL: ${{ secrets.SWARMARCHY_LOG_UPLOAD_URL }}
-          SWARMARCHY_LOG_UPLOAD_TOKEN: ${{ secrets.SWARMARCHY_LOG_UPLOAD_TOKEN }}
         run: |
           set -euxo pipefail
           docker run --rm --privileged \
             -e "SWARMARCHY_INSTALLER_REPO=${SWARMARCHY_INSTALLER_REPO}" \
             -e "SWARMARCHY_INSTALLER_REF=${SWARMARCHY_INSTALLER_REF}" \
             -e "SWARMARCHY_MIRROR=${SWARMARCHY_MIRROR}" \
-            -e SWARMARCHY_LOG_UPLOAD_URL \
-            -e SWARMARCHY_LOG_UPLOAD_TOKEN \
             -e "HOST_UID=$(id -u)" \
             -e "HOST_GID=$(id -g)" \
             -v "${GITHUB_WORKSPACE}/release:/out" \

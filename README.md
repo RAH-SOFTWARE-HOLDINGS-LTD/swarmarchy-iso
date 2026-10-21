@@ -28,6 +28,8 @@ Run `./bin/swarmarchy-iso-boot [release/swarmarchy.iso]`.
 
 ## Install-failure log upload
 
-Failed installs can upload their logs to your own Cloudflare Worker so you can read them on
-another computer. The URL and upload token are **required** to build the ISO (environment
-variables, or a gitignored `.log-upload.env`). Setup and trade-offs: `log-worker/README.md`.
+When an install fails, the failure menu offers "Upload log for support", which pastes the log
+to [dpaste.org](https://dpaste.org) and prints a URL you can open on another computer. No
+account, token or infrastructure is needed, and nothing is required to build the ISO. The log
+is truncated to its last 200 KiB and the paste expires after a week. See
+`swarmarchy-upload-file` in the installer repo.

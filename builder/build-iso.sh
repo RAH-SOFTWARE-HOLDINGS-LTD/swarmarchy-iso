@@ -86,22 +86,6 @@ for uploader in swarmarchy-upload-log swarmarchy-upload-file; do
   cp "$build_cache_dir/airootfs/root/swarmarchy/bin/$uploader" "$build_cache_dir/airootfs/usr/local/bin/$uploader"
 done
 
-# Bake the log upload endpoint + token (required; swarmarchy-iso-make resolves them from the
-# environment or the gitignored .log-upload.env). 0600 via profiledef.sh file_permissions.
-# NOTE: anyone holding this ISO can read the token; it only permits uploads and can be
-# rotated with `wrangler secret put UPLOAD_TOKEN` plus an ISO rebuild.
-if [[ -z ${SWARMARCHY_LOG_UPLOAD_URL-} || -z ${SWARMARCHY_LOG_UPLOAD_TOKEN-} ]]; then
-  echo "Error: SWARMARCHY_LOG_UPLOAD_URL and SWARMARCHY_LOG_UPLOAD_TOKEN are required." >&2
-  exit 1
-fi
-(
-  umask 077
-  {
-    printf 'SWARMARCHY_LOG_UPLOAD_URL=%q\n' "$SWARMARCHY_LOG_UPLOAD_URL"
-    printf 'SWARMARCHY_LOG_UPLOAD_TOKEN=%q\n' "$SWARMARCHY_LOG_UPLOAD_TOKEN"
-  } >"$build_cache_dir/airootfs/root/swarmarchy_log_upload"
-)
-
 
 # Download and verify Node.js binary for offline installation
 NODE_DIST_URL="https://nodejs.org/dist/latest"
