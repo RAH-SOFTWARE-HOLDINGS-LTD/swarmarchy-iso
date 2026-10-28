@@ -7,11 +7,14 @@
 # (the ADSP/CDSP remoteproc chain), and the GPU stuck on software rendering (the display MBN).
 # The bulk firmware copy does NOT land them there — they must sit, flattened, at the board path.
 #
-# Qualcomm licensing forbids redistributing these, so they are NEVER baked into the published
-# ISO. The user stages them per-machine: run docs/copy-qcom-firmware.ps1 on Windows to collect
-# them into a `firmware/` directory, then drop that directory onto any disk attached at install
-# time (e.g. a second partition on the USB stick, or a second USB). This script finds it, and
-# places the five board blobs at the path the msm / remoteproc drivers probe.
+# Qualcomm licensing forbids redistributing these, so they are NEVER in a published ISO. Two
+# sources, tried in order:
+#   1. Bundled: a PRIVATE build (swarmarchy-iso-make) copies them from the build host's
+#      ~/swarmarchy-pkgs-build/local/firmware into the ISO at $FW_BUNDLED.
+#   2. User-staged: run docs/copy-qcom-firmware.ps1 on Windows to collect them into a
+#      `firmware/` directory, then drop it onto any disk attached at install time (e.g. a
+#      second USB). This script scans the attached disks for it.
+# Either way the five board blobs end up at the path the msm / remoteproc drivers probe.
 #
 # Best-effort and NON-FATAL: on non-Yoga hardware, or when no staged `firmware/` is found, it
 # logs and exits 0 so the install still completes. See docs/05 §"External monitors (USB-C DP-alt)".
@@ -84,6 +87,16 @@ all_present() {
 
 mkdir -p "$BOARD_DIR"
 
+# --- 1. Firmware bundled into this ISO at build time ---
+FW_BUNDLED="${FW_BUNDLED:-/usr/local/share/swarmarchy/firmware}"
+if [[ -d "$FW_BUNDLED" ]]; then
+  n="$(place_from_tree "$FW_BUNDLED")"
+  log "bundled firmware: $n/${#REQUIRED[@]} blob(s) placed"
+fi
+
+# --- 2. Otherwise scan attached disks for a user-staged firmware/ directory ---
+if ! all_present; then
+
 # --- Scan attached filesystems for the user-staged `firmware/` directory ---
 # `firmware/` is what docs/copy-qcom-firmware.ps1 produces (it also writes a MANIFEST.csv there).
 # We skip the disk we're installing onto, and confirm a candidate by actually finding the blobs
@@ -109,6 +122,7 @@ while read -r name fstype; do
     fi
   fi
 done < <(lsblk -rno NAME,FSTYPE | awk 'NF==2')
+fi
 
 # --- report ---
 placed_now=0

@@ -79,6 +79,19 @@ else
   git clone -b $SWARMARCHY_INSTALLER_REF https://github.com/$SWARMARCHY_INSTALLER_REPO.git "$build_cache_dir/airootfs/root/swarmarchy"
 fi
 
+# Bundle the Yoga's Qualcomm board firmware, if present on the build host. These blobs are
+# proprietary: the ISO is for private use only and must never be published. They come from
+# ~/swarmarchy-pkgs-build/local/firmware (see swarmarchy-iso-make) and are read by
+# swarmarchy-stage-qcom-firmware at install time. Without them that script falls back to
+# looking for a user-staged firmware/ directory on a second disk.
+if [[ -d /localpkgs/firmware ]]; then
+  mkdir -p "$build_cache_dir/airootfs/usr/local/share/swarmarchy/firmware"
+  cp -p /localpkgs/firmware/* "$build_cache_dir/airootfs/usr/local/share/swarmarchy/firmware/"
+  echo "Bundled board firmware: $(ls /localpkgs/firmware | tr '\n' ' ')"
+else
+  echo "No /localpkgs/firmware; the ISO will not bundle Qualcomm board firmware."
+fi
+
 # Make the log uploader available in the ISO too. swarmarchy-upload-log calls
 # swarmarchy-upload-file, and the install error handler calls it directly, so ship both.
 mkdir -p "$build_cache_dir/airootfs/usr/local/bin/"
