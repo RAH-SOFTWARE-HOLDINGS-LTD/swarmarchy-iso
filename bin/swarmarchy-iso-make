@@ -97,6 +97,12 @@ if [[ -n "${LOCAL_SOURCE-}" ]]; then
   DOCKER_ARGS+=(-v "$SWARMARCHY_PATH:/swarmarchy:ro")
 fi
 
+# Private prebuilt packages that must not be published (see builder/build-iso.sh)
+LOCAL_PKGS="$HOME/swarmarchy-pkgs-build/local"
+if [[ -d $LOCAL_PKGS ]]; then
+  DOCKER_ARGS+=(-v "$LOCAL_PKGS:/localpkgs:ro")
+fi
+
 # Use local pacman cache if you already have one on host to speed up repeat runs
 if [ -d "/var/cache/pacman/pkg" ]; then
   DOCKER_ARGS+=(-v "/var/cache/pacman/pkg:/var/cache/pacman/pkg")

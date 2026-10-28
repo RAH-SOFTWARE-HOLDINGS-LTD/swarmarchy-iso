@@ -127,9 +127,38 @@ all_packages+=($(strip_pkgs "$build_cache_dir/airootfs/root/swarmarchy/install/s
 all_packages+=($(strip_pkgs "$build_cache_dir/airootfs/root/swarmarchy/install/swarmarchy-other.packages"))
 all_packages+=($(strip_pkgs /builder/archinstall.packages))
 
-# Download all the packages to the offline mirror inside the ISO
+# Download all the packages to the offline mirror inside the ISO.
+#
+# A single `pacman -Syw` aborts on any name no sync repo carries, so classify each name first:
+#   1. a sync repo can supply it (ALARM, our R2 [swarmarchy] repo, or as a provider such as
+#      `linux`) -> downloaded below, as always;
+#   2. not in a repo, but prebuilt in /localpkgs            -> copied into the mirror;
+#   3. neither (AUR-only)                                   -> skipped here; the installer's
+#      swarmarchy-pkg-add falls back to yay when the target is online.
+# /localpkgs is ~/swarmarchy-pkgs-build/local on the host (see swarmarchy-iso-make). It holds
+# packages whose licence forbids public redistribution (obsidian-appimage), so they ride in the
+# ISO for private use only -- NEVER upload them to the public R2 repo.
 mkdir -p /tmp/offlinedb
-pacman --config /configs/pacman-online-${SWARMARCHY_MIRROR}.conf --noconfirm --disable-sandbox -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
+pacman_online=(pacman --config /configs/pacman-online-${SWARMARCHY_MIRROR}.conf --noconfirm --disable-sandbox --dbpath /tmp/offlinedb)
+"${pacman_online[@]}" -Sy
+
+repo_packages=()
+for pkg in "${all_packages[@]}"; do
+  if "${pacman_online[@]}" -Sddp "$pkg" &>/dev/null; then
+    repo_packages+=("$pkg")
+    continue
+  fi
+
+  local_pkg=$(ls -1 /localpkgs/"$pkg"-[0-9]*.pkg.tar.* 2>/dev/null | grep -v '\.sig$' | tail -n1 || true)
+  if [[ -n $local_pkg ]]; then
+    echo "Using local package for $pkg: $local_pkg"
+    cp "$local_pkg" "$offline_mirror_dir/"
+  else
+    echo "Skipping $pkg for the offline mirror (not in any repo; installed by yay at install time)"
+  fi
+done
+
+"${pacman_online[@]}" -Sw "${repo_packages[@]}" --cachedir $offline_mirror_dir/
 # ALARM packages (and our custom repo pkgs, host makepkg PKGEXT=.pkg.tar.xz) are xz-compressed,
 # not zst. Match both extensions via nullglob so an unmatched pattern expands to nothing instead
 # of a literal glob string (which repo-add would treat as a missing file, tripping set -e).
