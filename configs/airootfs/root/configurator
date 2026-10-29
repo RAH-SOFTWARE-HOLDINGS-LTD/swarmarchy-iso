@@ -320,12 +320,32 @@ disk_form
 
 confirm_disk_overwrite() {
   local mode="encrypted"
-  local affirmative confirm_status
+  local affirmative confirm_status part partitions
+
+  # Spell out what dies, the way confirm_reuse_previous does. A whole-disk wipe
+  # is the one path that takes every other operating system with it, so naming
+  # the partitions is more use here than anywhere else.
+  partitions=$(
+    lsblk -rnpo PATH,TYPE,SIZE,FSTYPE,LABEL "$disk" 2>/dev/null |
+      awk '$2=="part" {
+        printf "%s  %-7s %-6s %s\n", $1, $3, ($4==""?"-":$4), ($5==""?"":"["$5"]")
+      }'
+  )
 
   while true; do
     clear_logo
     echo
     gum style "Everything will be overwritten. There is no recovery possible."
+    echo
+
+    if [[ -n $partitions ]]; then
+      gum style --foreground 1 "DESTROYED -- the whole of ${disk}, including every other operating system on it:"
+      while read -r part; do
+        [[ -n $part ]] && gum style --foreground 1 "  $part"
+      done <<<"$partitions"
+    else
+      gum style --foreground 8 "${disk} has no partitions on it."
+    fi
 
     if [[ $mode == "encrypted" ]]; then
       gum style --foreground 8 "Press Ctrl+C for unencrypted install."

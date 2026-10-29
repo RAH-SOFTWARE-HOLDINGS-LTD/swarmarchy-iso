@@ -138,6 +138,53 @@ cleanup_install_disk() {
 # install. In that mode archinstall runs with config_type=pre_mounted_config, so
 # it does NO partitioning, formatting or mounting -- everything below is ours.
 
+# The configurator finds a previous install only by these two filesystem labels,
+# so every path that creates the partitions has to stamp them. Keep in step with
+# SWARM_ESP_LABEL / SWARM_ROOT_LABEL in configs/airootfs/root/configurator.
+SWARM_ESP_LABEL="SWARMBOOT"
+SWARM_ROOT_LABEL="swarmarchy"
+
+# archinstall's PartitionModification carries no label field (checked against
+# 4.5: its json() emits obj_id/status/type/start/size/fs_type/mountpoint/
+# mount_options/flags/dev_path/btrfs and nothing else), so the whole-disk path
+# leaves its partitions unlabelled -- and a later reinstall is then offered only
+# another whole-disk wipe, which is what ab6cf01 set out to remove. Stamp them
+# once archinstall has formatted and mounted the tree.
+#
+# Deliberately never fatal: an unlabelled install boots perfectly well, it just
+# loses the reinstall shortcut, and that is no reason to fail a finished install.
+# genfstab runs with -pU, so the target's fstab is by UUID and relabelling is safe.
+label_wipe_partitions() {
+  local esp root
+  root=$(findmnt -no SOURCE /mnt | sed 's/\[.*\]//')
+  esp=$(findmnt -no SOURCE /mnt/boot)
+
+  if [[ -n $root ]]; then
+    # Works on the mounted filesystem, addressed by mountpoint.
+    btrfs filesystem label /mnt "$SWARM_ROOT_LABEL" &&
+      echo "Labelled root $root as $SWARM_ROOT_LABEL" ||
+      echo "Warning: could not label root $root" >&2
+  else
+    echo "Warning: no root source for /mnt; left it unlabelled" >&2
+  fi
+
+  # fatlabel writes the boot sector directly, so the ESP must be unmounted while
+  # it runs. Its mount_options are empty in the configurator's disk_config, so a
+  # plain mount restores exactly what archinstall had.
+  if [[ -n $esp ]]; then
+    if umount /mnt/boot; then
+      fatlabel "$esp" "$SWARM_ESP_LABEL" &&
+        echo "Labelled ESP $esp as $SWARM_ESP_LABEL" ||
+        echo "Warning: could not label ESP $esp" >&2
+      mount "$esp" /mnt/boot
+    else
+      echo "Warning: /mnt/boot is busy; left the ESP unlabelled" >&2
+    fi
+  else
+    echo "Warning: no ESP source for /mnt/boot; left it unlabelled" >&2
+  fi
+}
+
 dualboot_enabled() {
   [[ -f user_install_mode.txt ]] || return 1
   local m; m=$(<user_install_mode.txt)
@@ -196,8 +243,8 @@ prepare_dualboot_target() {
     umount -R /mnt 2>/dev/null || true
     wipefs -a "$esp_part" >/dev/null
     wipefs -a "$root_part" >/dev/null
-    mkfs.vfat -F32 -n SWARMBOOT "$esp_part"
-    mkfs.btrfs -f -L swarmarchy "$root_part"
+    mkfs.vfat -F32 -n "$SWARM_ESP_LABEL" "$esp_part"
+    mkfs.btrfs -f -L "$SWARM_ROOT_LABEL" "$root_part"
 
     mount_dualboot_tree "$esp_part" "$root_part"
     return 0
@@ -262,8 +309,8 @@ prepare_dualboot_target() {
 
   echo "Dual-boot: ESP=$esp_part root=$root_part"
 
-  mkfs.vfat -F32 -n SWARMBOOT "$esp_part"
-  mkfs.btrfs -f -L swarmarchy "$root_part"
+  mkfs.vfat -F32 -n "$SWARM_ESP_LABEL" "$esp_part"
+  mkfs.btrfs -f -L "$SWARM_ROOT_LABEL" "$root_part"
 
   # Subvolume layout mirrors the wipe path so snapshots/rollback behave the same.
   mount_dualboot_tree "$esp_part" "$root_part"
@@ -435,6 +482,12 @@ install_base_system() {
     --skip-wkd \
     --skip-wifi-check \
     --skip-boot
+
+  # The alongside/reuse paths label at mkfs time; the wipe path cannot, because
+  # archinstall did the formatting.
+  if ! dualboot_enabled; then
+    label_wipe_partitions
+  fi
 
   # After archinstall sets up the base system but before our installer runs,
   # we need to ensure the offline pacman.conf is in place
