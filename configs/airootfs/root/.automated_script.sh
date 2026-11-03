@@ -364,7 +364,7 @@ install_dualboot_bootloader() {
   local board_args=""
   local dtb_rel="" dtb_line=""
   if grep -qa "x1e80100" /sys/firmware/devicetree/base/compatible 2>/dev/null; then
-    board_args=" pd_ignore_unused clk_ignore_unused fw_devlink=off efi=novamp cma=128M rootwait"
+    board_args=" pd_ignore_unused clk_ignore_unused fw_devlink=off efi=novamap cma=128M rootwait"
     dtb_rel="boot/dtbs/qcom/x1e80100-lenovo-yoga-slim7x.dtb"
     [[ -f "/mnt/$dtb_rel" ]] || dtb_rel=""
   fi
