@@ -44,6 +44,21 @@ install_swarmarchy() {
   chroot_bash -lc "sudo pacman -S --noconfirm --needed gum" >/dev/null
   chroot_bash -lc "SWARMARCHY_PATH=$SWARMARCHY_SRC source $SWARMARCHY_SRC/install.sh || bash"
 
+  # Stage the per-machine Qualcomm X Elite board firmware onto the new root. Licensing forbids
+  # shipping it in the ISO, so this sources the five board blobs from a user-staged qcom-firmware/
+  # dir or the dual-boot Windows DriverStore and drops them at the exact board path the msm /
+  # remoteproc drivers probe. Best-effort and non-fatal (no-op on non-Yoga hardware).
+  #
+  # Runs AFTER the installer, not before: swarmarchy-other.packages installs linux-firmware-qcom,
+  # which owns four of these five paths (adsp_dtbs.elf, qcadsp8380.mbn, qccdsp8380.mbn,
+  # qcdxkmsuc8380.mbn). Staging first would leave them unowned and pacman would abort with
+  # "exists in filesystem", failing swarmarchy-pkg-add and the whole userland install.
+  #
+  # So the package lands first and supplies what no staged source has (the .jsn files, the audio
+  # tplg, qcav1e8380/qcvss8380); then the staged blobs overwrite its four overlapping copies,
+  # which are different builds -- see swarmarchy-stage-qcom-firmware for the sizes and why the
+  # machine-specific ones win -- and add cdsp_dtbs.elf, which no repo ships.
+  swarmarchy-stage-qcom-firmware /mnt || true
 
   # Reboot if requested by installer
   if [[ -f /mnt/var/tmp/swarmarchy-install-completed ]]; then
@@ -531,11 +546,6 @@ EOF
   find "$SWARMARCHY_SRC_TARGET" -type f -path "*/bin/*" -exec chmod +x {} \;
   find "$SWARMARCHY_SRC_TARGET/default/waybar" -type f -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
 
-  # Stage the per-machine Qualcomm X Elite board firmware onto the new root. Licensing forbids
-  # shipping it in the ISO, so this sources the five board blobs from a user-staged qcom-firmware/
-  # dir or the dual-boot Windows DriverStore and drops them at the exact board path the msm /
-  # remoteproc drivers probe. Best-effort and non-fatal (no-op on non-Yoga hardware).
-  swarmarchy-stage-qcom-firmware /mnt || true
 }
 
 

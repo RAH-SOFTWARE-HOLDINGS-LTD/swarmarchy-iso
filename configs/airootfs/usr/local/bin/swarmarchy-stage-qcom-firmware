@@ -64,15 +64,32 @@ try_mount_ro() {
   return 1
 }
 
+# Blobs this run has already staged, one name per line. A FILE, not an array: place_from_tree
+# is called inside $( ), so it runs in a subshell and an array assignment would not survive.
+STAGED_LIST="$WORK/staged"
+: >"$STAGED_LIST"
+
 # Copy each required blob (flattened, first match wins) out of a source tree into the board dir.
 # Echoes the count present afterwards.
+#
+# Deliberately OVERWRITES what linux-firmware-qcom put here. That package ships four of the five
+# board blobs, but they are different builds from the ones extracted off this machine's Windows
+# DriverStore -- adsp_dtbs.elf 40760 vs 73528 bytes, qcadsp8380.mbn 21592504 vs 22063544, and a
+# different zap shader (qcdxkmsuc8380.mbn), which docs/05 notes is signed and model-specific. The
+# machine-specific blobs are the ones proven to work on this board, so they win; the package still
+# supplies what no staged source has (the .jsn files, the audio tplg, qcav1e8380/qcvss8380).
+#
+# The skip is therefore "did WE already stage this", not "does a file exist" -- otherwise the
+# package's copies would block the staged ones, while still letting a second staging source
+# redundantly overwrite the first.
 place_from_tree() {
   local root="$1" placed=0 f src
   for f in "${REQUIRED[@]}"; do
-    [[ -f "$BOARD_DIR/$f" ]] && { placed=$((placed + 1)); continue; }
+    grep -qxF "$f" "$STAGED_LIST" 2>/dev/null && { placed=$((placed + 1)); continue; }
     src="$(find "$root" -type f -iname "$f" 2>/dev/null | head -1)"
     if [[ -n "$src" ]] && install -Dm644 "$src" "$BOARD_DIR/$f" 2>/dev/null; then
       placed=$((placed + 1))
+      echo "$f" >>"$STAGED_LIST"
     fi
   done
   echo "$placed"
