@@ -150,7 +150,62 @@ user_form() {
   fi
 }
 
+# STEP 2b: OPTIONAL FEATURES
+#
+# These three used to be asked in the chroot phase by install/preflight/{printing,
+# containers,lazydocker}.sh -- i.e. AFTER the whole archinstall base install had run,
+# so the user answered the identity block, waited through the base install, then got
+# asked three more questions. Asking them here puts every question in one place.
+#
+# Each preflight script skips its prompt when its variable is already set, so passing
+# these through to the chroot (see chroot_bash in .automated_script.sh) is all that is
+# needed -- the preflight scripts themselves are unchanged and still prompt for a
+# layer-only install onto an existing Arch system.
+#
+# Wording is kept identical to the preflight scripts on purpose.
+
+features_form() {
+  step "A few optional extras..."
+
+  if gum confirm \
+    --affirmative "Install printing" \
+    --negative "Skip printing" \
+    "Set up printer support (CUPS)? Needed only if you print from this machine."; then
+    printing=1
+  else
+    printing=0
+  fi
+
+  if gum confirm \
+    --default=false \
+    --affirmative "Install containers" \
+    --negative "Skip" \
+    "Install Podman and docker-compose (rootless containers)?"; then
+    containers=1
+  else
+    containers=0
+  fi
+
+  # lazydocker needs a container engine, so it is only offered alongside Podman.
+  if [[ $containers == 1 ]]; then
+    if gum confirm \
+      --default=false \
+      --affirmative "Install lazydocker" \
+      --negative "Skip" \
+      "Install lazydocker? A terminal UI for the Podman containers."; then
+      lazydocker=1
+    else
+      lazydocker=0
+    fi
+  else
+    lazydocker=0
+  fi
+}
+
+yes_no() { [[ $1 == 1 ]] && echo "Yes" || echo "No"; }
+
 user_form
+features_form
 
 while true; do
   # Add manual padding since gum table -p doesn't respect padding
@@ -161,7 +216,10 @@ Full name,${full_name:-[Skipped]}
 Email address,${email_address:-[Skipped]}
 Hostname,$hostname
 Timezone,$timezone
-Keyboard,$keyboard" |
+Keyboard,$keyboard
+Printing,$(yes_no "$printing")
+Containers,$(yes_no "$containers")
+lazydocker,$(yes_no "$lazydocker")" |
     gum table -s "," -p | sed "s/^/${PADDING_LEFT_SPACES}/"
 
   echo
@@ -170,6 +228,7 @@ Keyboard,$keyboard" |
   else
     keyboard_form
     user_form
+    features_form
   fi
 done
 
@@ -489,6 +548,13 @@ clear
 echo "$full_name" >user_full_name.txt
 echo "$email_address" >user_email_address.txt
 
+# Optional-feature answers, read back by chroot_bash in .automated_script.sh and
+# exported as SWARMARCHY_PRINTING / _CONTAINERS / _LAZYDOCKER so the chroot phase's
+# preflight scripts skip their prompts.
+echo "$printing" >user_printing.txt
+echo "$containers" >user_containers.txt
+echo "$lazydocker" >user_lazydocker.txt
+
 # Escape username and password for safe inclusion
 password_escaped=$(echo -n "$password" | jq -Rsa)
 password_hash_escaped=$(echo -n "$password_hash" | jq -Rsa)
@@ -728,10 +794,13 @@ if [[ $1 == "dry" ]]; then
   echo -e "\nInstall Mode:"
   cat user_install_mode.txt
 
+  echo -e "\nOptional features (printing/containers/lazydocker):"
+  cat user_printing.txt user_containers.txt user_lazydocker.txt
+
   if [[ -f user_dualboot.env ]]; then
     echo -e "\nDual-boot Target:"
     cat user_dualboot.env
   fi
 
-  rm -f user_configuration.json user_credentials.json user_full_name.txt user_email_address.txt user_encrypt_installation.txt user_install_mode.txt user_dualboot.env
+  rm -f user_configuration.json user_credentials.json user_full_name.txt user_email_address.txt user_encrypt_installation.txt user_install_mode.txt user_dualboot.env user_printing.txt user_containers.txt user_lazydocker.txt
 fi

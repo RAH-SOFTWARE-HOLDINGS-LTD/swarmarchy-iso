@@ -549,12 +549,21 @@ EOF
 }
 
 
+# Optional-feature answers come from the configurator (STEP 2b) so the user is asked
+# everything up front instead of again here, after the base install. Missing file =>
+# empty => install/preflight/{printing,containers,lazydocker}.sh fall back to prompting,
+# which is the old behaviour and keeps an older configurator working.
+read_answer() { [[ -f $1 ]] && tr -dc '01' <"$1" || true; }
+
 chroot_bash() {
   HOME=/home/$SWARMARCHY_USER \
     arch-chroot -u $SWARMARCHY_USER /mnt/ \
     env SWARMARCHY_CHROOT_INSTALL=1 \
     SWARMARCHY_USER_NAME="$(<user_full_name.txt)" \
     SWARMARCHY_USER_EMAIL="$(<user_email_address.txt)" \
+    SWARMARCHY_PRINTING="$(read_answer user_printing.txt)" \
+    SWARMARCHY_CONTAINERS="$(read_answer user_containers.txt)" \
+    SWARMARCHY_LAZYDOCKER="$(read_answer user_lazydocker.txt)" \
     SWARMARCHY_MIRROR="$SWARMARCHY_MIRROR" \
     USER="$SWARMARCHY_USER" \
     HOME="/home/$SWARMARCHY_USER" \
