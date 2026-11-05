@@ -334,6 +334,26 @@ prepare_dualboot_target() {
 # Keep the ESP small: linux-aarch64 ships ~120MiB of device trees, but a given
 # machine needs exactly one. Without this the shared ESP fills up and there is
 # no headroom left for Limine snapshot entries.
+limit_target_firmware() {
+  # linux-firmware-qcom ships every Snapdragon: 557 MiB under /usr/lib/firmware/qcom on a
+  # machine that needs 156 KiB of Adreno microcode plus its own audio topology. Worse, it
+  # puts cross-SoC protection-domain maps on the firmware search path --
+  #   x1e80100/battmgr.jsn -> ../qcm6490/battmgr.jsn   (a different SoC)
+  #   x1e80100/{adspr,adsps,adspua,cdspr}.jsn -> ../eliza/
+  # which qcom_pd_mapper reads to build the registry charger_pd (the USB-C manager)
+  # registers through. A working install has ZERO .jsn on the search path and pd_mapper
+  # uses its built-in x1e80100 table (PDR reports charger_pd and audio_pd up).
+  #
+  # The board blobs come from the Windows DriverStore via swarmarchy-stage-qcom-firmware
+  # and differ from the package's, so the package must not ship those either.
+  # Measured effect of these rules: 557 MiB -> 25 MiB, 108 .jsn -> 0.
+  sed -i "/^\\[options\\]/a \\\n# Swarmarchy: keep only the Qualcomm firmware this board loads.\nNoExtract = usr/lib/firmware/qcom/*\nNoExtract = !usr/lib/firmware/qcom/gen70500*\nNoExtract = !usr/lib/firmware/qcom/x1e80100/*-tplg.bin\nNoExtract = !usr/lib/firmware/qcom/x1e80100/LENOVO/83ED/*-tplg.bin" /mnt/etc/pacman.conf
+
+  if ! grep -A8 '^\[options\]' /mnt/etc/pacman.conf | grep -q "^NoExtract = usr/lib/firmware/qcom/\*"; then
+    echo "WARNING - qcom firmware NoExtract rules did not land in [options]" >&2
+  fi
+}
+
 limit_target_dtbs() {
   local keep="$1"
   [[ -n $keep ]] || return 0
@@ -424,6 +444,7 @@ Exec = /bin/sh -c "/usr/bin/cp /usr/share/limine/BOOTAA64.EFI /boot/EFI/swarmarc
 EOF
 
   limit_target_dtbs "$dtb_rel"
+  limit_target_firmware
 
   # Register with the firmware, preserving the existing boot order. efibootmgr
   # puts a new entry first; we restore the previous order with ours appended so
