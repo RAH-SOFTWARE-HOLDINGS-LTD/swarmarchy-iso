@@ -53,6 +53,19 @@ if [[ "$ARCH" != "x86_64" && -f "$build_cache_dir/packages.x86_64" ]]; then
   # ALARM ships the generic kernel as `linux-aarch64`, not `linux`.
   sed -i -E 's/^linux$/linux-aarch64/; s/^linux-headers$/linux-aarch64-headers/' \
     "$build_cache_dir/packages.$ARCH"
+  # Firmware: releng asks for the `linux-firmware` meta (plus -marvell), which depends on 12
+  # splits and lands 1.2 GiB in the live environment's /usr/lib/firmware. About 795 MiB of that
+  # is for hardware a Snapdragon laptop cannot have -- intel 403 MiB, nvidia 152, amdgpu 91,
+  # mediatek 70, realtek 37, broadcom 20, ti 14, radeon 5, amd 2.6, marvell. Nothing depends on
+  # the meta by name. Keep only what the board actually loads:
+  #   atheros  Wi-Fi -- WCN785x/FastConnect 7800 via ath12k_wifi7_pci
+  #   cirrus   the CS35L41 speaker amps
+  #   other    misc blobs not split out by vendor
+  #   whence   the licence manifest the others reference
+  # Worth ~0.6 GiB off the ISO, which matters because the install stick reads at 18.6 MB/s.
+  sed -i -E '/^linux-firmware(-marvell)?$/d' "$build_cache_dir/packages.$ARCH"
+  printf '%s\n' linux-firmware-atheros linux-firmware-cirrus linux-firmware-other \
+    linux-firmware-whence >>"$build_cache_dir/packages.$ARCH"
 fi
 
 # Avoid using reflector for mirror identification as we are relying on the global CDN

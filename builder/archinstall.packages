@@ -4,7 +4,12 @@
 base               # core Arch base meta-package
 base-devel         # compilers/make — needed to build AUR packages on first boot
 linux-aarch64      # the live + install kernel (generic ARM; swap for a Snapdragon-X kernel)
-linux-firmware     # device firmware blobs (Wi-Fi/GPU/etc.)
+# Firmware: explicit splits, not the `linux-firmware` meta (12 deps, 1.2 GiB, ~795 MiB
+# of it for hardware this board cannot have). Matches swarmarchy-other.packages.
+linux-firmware-atheros  # REQUIRED: Wi-Fi (WCN785x via ath12k_wifi7_pci)
+linux-firmware-cirrus   # REQUIRED: CS35L41 speaker amps
+linux-firmware-other    # misc blobs not split out by vendor
+linux-firmware-whence   # licence manifest the others reference
 alsa-firmware      # extra sound-card firmware
 limine             # the bootloader (installed to the target disk)
 efibootmgr         # create/edit UEFI boot entries during install
