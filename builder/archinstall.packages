@@ -6,10 +6,10 @@ base-devel         # compilers/make — needed to build AUR packages on first bo
 linux-aarch64      # the live + install kernel (generic ARM; swap for a Snapdragon-X kernel)
 # Firmware: explicit splits, not the `linux-firmware` meta (12 deps, 1.2 GiB, ~795 MiB
 # of it for hardware this board cannot have). Matches swarmarchy-other.packages.
-linux-firmware-atheros  # REQUIRED: Wi-Fi (WCN785x via ath12k_wifi7_pci)
+linux-firmware-atheros  # REQUIRED: Wi-Fi (WCN785x via ath12k_wifi7_pci) + Bluetooth (qca/)
 linux-firmware-cirrus   # REQUIRED: CS35L41 speaker amps
-linux-firmware-other    # misc blobs not split out by vendor
-linux-firmware-whence   # licence manifest the others reference
+#                         -whence is a hard dep of both, so it arrives automatically.
+#                         -other dropped: 44.7 MiB of 3com/Adaptec/DVB/Myricom-era hardware.
 alsa-firmware      # extra sound-card firmware
 limine             # the bootloader (installed to the target disk)
 efibootmgr         # create/edit UEFI boot entries during install

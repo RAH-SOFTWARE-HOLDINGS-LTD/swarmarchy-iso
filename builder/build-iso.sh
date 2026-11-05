@@ -58,14 +58,14 @@ if [[ "$ARCH" != "x86_64" && -f "$build_cache_dir/packages.x86_64" ]]; then
   # is for hardware a Snapdragon laptop cannot have -- intel 403 MiB, nvidia 152, amdgpu 91,
   # mediatek 70, realtek 37, broadcom 20, ti 14, radeon 5, amd 2.6, marvell. Nothing depends on
   # the meta by name. Keep only what the board actually loads:
-  #   atheros  Wi-Fi -- WCN785x/FastConnect 7800 via ath12k_wifi7_pci
+  #   atheros  Wi-Fi -- WCN785x/FastConnect 7800 via ath12k_wifi7_pci -- and Bluetooth (qca/)
   #   cirrus   the CS35L41 speaker amps
-  #   other    misc blobs not split out by vendor
-  #   whence   the licence manifest the others reference
-  # Worth ~0.6 GiB off the ISO, which matters because the install stick reads at 18.6 MB/s.
+  # -whence is a hard dependency of both, so it arrives without being listed. -other is NOT
+  # kept: its 44.7 MiB is 3com/Adaptec/DVB-tuner/Myricom/dsp56k-era hardware that this board
+  # cannot have, and only the linux-firmware meta ever depended on it.
+  # Worth ~0.65 GiB off the ISO, which matters because the install stick reads at 18.6 MB/s.
   sed -i -E '/^linux-firmware(-marvell)?$/d' "$build_cache_dir/packages.$ARCH"
-  printf '%s\n' linux-firmware-atheros linux-firmware-cirrus linux-firmware-other \
-    linux-firmware-whence >>"$build_cache_dir/packages.$ARCH"
+  printf '%s\n' linux-firmware-atheros linux-firmware-cirrus >>"$build_cache_dir/packages.$ARCH"
 fi
 
 # Avoid using reflector for mirror identification as we are relying on the global CDN
