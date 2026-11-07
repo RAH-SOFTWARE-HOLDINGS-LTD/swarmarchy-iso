@@ -729,6 +729,24 @@ _EOF_
   )
 fi
 
+# network_config MUST be "iwd", not "iso".
+#
+# "iso" calls copy_iso_network_config(enable_services=True), which copies archiso's
+# /etc/systemd/network/20-wlan.network into the target and enables systemd-networkd.
+# That file matches the wireless interface and runs its own DHCP, while iwd also
+# authenticates -- a hybrid stack (networkd addressing + iwd auth). On the X1E80100
+# Yoga Slim 7x that reliably produced USB enumeration failures (-71/-62) on a USB-C
+# dock/KVM, verified by re-enabling networkd and watching the errors return.
+#
+# "iwd" is archinstall's supported standalone-iwd mode (NicType.IWD, present since
+# archinstall 4.4). It writes /etc/iwd/main.conf with EnableNetworkConfiguration=true
+# + NameResolvingService=systemd -- byte-identical to system/etc/iwd/main.conf in the
+# swarmarchy repo -- and writes only 20-wired.network (Type=ether), so networkd never
+# touches the wireless interface.
+#
+# Note archinstall enables systemd-networkd in EVERY mode except NetworkManager, so
+# install/config/hardware/basics.sh in the swarmarchy repo still disables it after the
+# fact. That remains the backstop; this setting removes the root cause.
 cat <<-_EOF_ >user_configuration.json
 {
     "app_config": null,
@@ -740,7 +758,7 @@ cat <<-_EOF_ >user_configuration.json
     "disk_config": $disk_config_json,
     "hostname": "$hostname",
     "kernels": [ "$kernel_choice" ],
-    "network_config": { "type": "iso" },
+    "network_config": { "type": "iwd" },
     "ntp": true,
     "parallel_downloads": 8,
     "script": null,
