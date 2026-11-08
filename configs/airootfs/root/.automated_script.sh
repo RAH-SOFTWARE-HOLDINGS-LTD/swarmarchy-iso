@@ -60,9 +60,62 @@ install_swarmarchy() {
   # machine-specific ones win -- and add cdsp_dtbs.elf, which no repo ships.
   swarmarchy-stage-qcom-firmware /mnt || true
 
+  # Give the installed system real package repositories.
+  #
+  # The ISO runs on pacman-offline.conf, whose ONLY repo is [offline] pointing at
+  # file:///var/cache/swarmarchy/mirror/offline/. That file is copied to
+  # /mnt/etc/pacman.conf above so the chroot installs from the offline mirror --
+  # correct during the install, fatal afterwards: the mirror directory is not part
+  # of the target, so the installed system is left with no usable repository at
+  # all. Every `pacman -Sy` then fails with
+  #   error: failed retrieving file 'offline.db' from disk
+  #   error: no usable package repositories configured
+  # and the machine can never install or update anything. Observed on a real
+  # install, which had sat unable to fetch a single package since it was made.
+  #
+  # Drop the dead [offline] stanza and add the normal Arch Linux ARM repos. The
+  # [options] block is left intact, which keeps the NoExtract rules written by
+  # limit_target_firmware/limit_target_dtbs earlier.
+  restore_target_repos
+
   # Reboot if requested by installer
   if [[ -f /mnt/var/tmp/swarmarchy-install-completed ]]; then
     reboot
+  fi
+}
+
+restore_target_repos() {
+  local conf=/mnt/etc/pacman.conf
+  [[ -f $conf ]] || return 0
+
+  sed -i '/^\[offline\]/,/^Server = file:\/\/\/var\/cache\/swarmarchy/d' "$conf"
+
+  if ! grep -q '^\[core\]' "$conf"; then
+    cat >>"$conf" <<'PACEOF'
+
+[core]
+Include = /etc/pacman.d/mirrorlist
+
+[extra]
+Include = /etc/pacman.d/mirrorlist
+
+[alarm]
+Include = /etc/pacman.d/mirrorlist
+
+[aur]
+Include = /etc/pacman.d/mirrorlist
+PACEOF
+  fi
+
+  # The bind-mounted offline mirror is not unmounted into the target; make sure no
+  # empty stub is left behind to suggest it is still a valid source.
+  rmdir /mnt/var/cache/swarmarchy/mirror/offline /mnt/var/cache/swarmarchy/mirror \
+        /mnt/var/cache/swarmarchy 2>/dev/null || true
+
+  if grep -q '^\[core\]' "$conf" && ! grep -q '^\[offline\]' "$conf"; then
+    echo "Target pacman.conf: offline repo removed, core/extra/alarm/aur added"
+  else
+    echo "WARNING: target pacman.conf may still lack usable repositories" >&2
   fi
 }
 
