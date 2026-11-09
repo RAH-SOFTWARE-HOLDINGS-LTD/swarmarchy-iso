@@ -259,6 +259,56 @@ dualboot_enabled() {
   [[ $m == "dualboot" || $m == "reuse" ]]
 }
 
+# LUKS for the alongside/reuse paths.
+#
+# The wipe path lets archinstall encrypt, but these paths run with
+# pre_mounted_config: archinstall adopts a tree we have already mounted, so it
+# never sees a raw partition and cannot encrypt one. We do it here, between
+# partitioning and mkfs.
+#
+# Sets ROOT_FS_DEV to the device the filesystem goes on -- the opened mapping when
+# encrypting, the partition itself otherwise -- so callers stay agnostic. It sets a
+# global rather than echoing a value because $(...) runs in a subshell, where the
+# LUKS UUID it also records would be discarded and the cmdline would silently lose
+# cryptdevice=.
+SWARM_LUKS_NAME="swarmarchy_root"
+DUALBOOT_LUKS_UUID=""
+ROOT_FS_DEV=""
+
+luks_prepare_root() {
+  local part="$1"
+
+  ROOT_FS_DEV="$part"
+  [[ $(cat user_encrypt_installation.txt 2>/dev/null) == "true" ]] || return 0
+
+  if [[ ! -s user_luks_password.txt ]]; then
+    echo "Dual-boot: encryption requested but no passphrase was written" >&2
+    return 1
+  fi
+
+  # A previous install's mapping may still be open over this partition.
+  cryptsetup close "$SWARM_LUKS_NAME" 2>/dev/null || true
+
+  echo "Dual-boot: encrypting $part with LUKS2" >&2
+  if ! cryptsetup luksFormat --type luks2 --batch-mode \
+         --key-file user_luks_password.txt "$part" >&2; then
+    echo "Dual-boot: luksFormat failed on $part" >&2
+    return 1
+  fi
+  if ! cryptsetup open --key-file user_luks_password.txt "$part" "$SWARM_LUKS_NAME" >&2; then
+    echo "Dual-boot: could not open the new LUKS volume on $part" >&2
+    return 1
+  fi
+
+  # The cmdline needs the UUID of the LUKS container, not of the filesystem
+  # inside it; those are different and only this one survives being locked.
+  DUALBOOT_LUKS_UUID=$(blkid -s UUID -o value "$part")
+  export DUALBOOT_LUKS_UUID SWARM_LUKS_NAME
+
+  shred -u user_luks_password.txt 2>/dev/null || rm -f user_luks_password.txt
+  ROOT_FS_DEV="/dev/mapper/$SWARM_LUKS_NAME"
+}
+
 mount_dualboot_tree() {
   local esp_part="$1" root_part="$2"
 
@@ -312,9 +362,11 @@ prepare_dualboot_target() {
     wipefs -a "$esp_part" >/dev/null
     wipefs -a "$root_part" >/dev/null
     mkfs.vfat -F32 -n "$SWARM_ESP_LABEL" "$esp_part"
-    mkfs.btrfs -f -L "$SWARM_ROOT_LABEL" "$root_part"
 
-    mount_dualboot_tree "$esp_part" "$root_part"
+    luks_prepare_root "$root_part" || return 1
+    mkfs.btrfs -f -L "$SWARM_ROOT_LABEL" "$ROOT_FS_DEV"
+
+    mount_dualboot_tree "$esp_part" "$ROOT_FS_DEV"
     return 0
   fi
 
@@ -378,10 +430,14 @@ prepare_dualboot_target() {
   echo "Dual-boot: ESP=$esp_part root=$root_part"
 
   mkfs.vfat -F32 -n "$SWARM_ESP_LABEL" "$esp_part"
-  mkfs.btrfs -f -L "$SWARM_ROOT_LABEL" "$root_part"
+
+  luks_prepare_root "$root_part" || return 1
+  mkfs.btrfs -f -L "$SWARM_ROOT_LABEL" "$ROOT_FS_DEV"
 
   # Subvolume layout mirrors the wipe path so snapshots/rollback behave the same.
-  mount_dualboot_tree "$esp_part" "$root_part"
+  # ROOT_FS_DEV, not $root_part: with encryption the filesystem lives on the LUKS
+  # mapping, and mounting the raw partition would fail.
+  mount_dualboot_tree "$esp_part" "$ROOT_FS_DEV"
 }
 
 # Keep the ESP small: linux-aarch64 ships ~120MiB of device trees, but a given
@@ -458,6 +514,20 @@ install_dualboot_bootloader() {
   fi
   [[ -n $dtb_rel ]] && dtb_line="    dtb_path: boot():/${dtb_rel#boot/}"
 
+  # How the kernel finds root. Unencrypted it is the filesystem UUID directly;
+  # encrypted it must first unlock the LUKS container, so the cmdline names the
+  # CONTAINER's UUID (the filesystem UUID inside it is unreadable until then) and
+  # points root= at the mapping the initramfs creates.
+  #
+  # The `encrypt` hook that acts on cryptdevice= is already in the HOOKS line the
+  # layer writes (install/login/limine-snapper.sh), ahead of `filesystems`, and
+  # swarmarchy-hibernation-setup appends `resume` after it -- which is the order
+  # required for the hibernation swapfile to be reachable once root is unlocked.
+  local root_args="root=UUID=$DUALBOOT_ROOT_UUID rootflags=subvol=@ rw"
+  if [[ -n ${DUALBOOT_LUKS_UUID:-} ]]; then
+    root_args="cryptdevice=UUID=${DUALBOOT_LUKS_UUID}:${SWARM_LUKS_NAME} root=/dev/mapper/${SWARM_LUKS_NAME} rootflags=subvol=@ rw"
+  fi
+
   # ALARM installs the kernel as /boot/Image, not /boot/vmlinuz-linux.
   local kernel_img="Image"
   [[ -f /mnt/boot/$kernel_img ]] || kernel_img="vmlinuz-linux"
@@ -476,7 +546,7 @@ timeout: 3
 /Swarmarchy
     protocol: linux
     path: boot():/$kernel_img
-    cmdline: root=UUID=$DUALBOOT_ROOT_UUID rootflags=subvol=@ rw$board_args
+    cmdline: $root_args$board_args
     module_path: boot():/initramfs-linux.img
 $dtb_line
 EOF
