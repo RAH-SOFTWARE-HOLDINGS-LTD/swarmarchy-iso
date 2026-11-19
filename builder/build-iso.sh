@@ -92,14 +92,15 @@ else
   git clone -b $SWARMARCHY_INSTALLER_REF https://github.com/$SWARMARCHY_INSTALLER_REPO.git "$build_cache_dir/airootfs/root/swarmarchy"
 fi
 
-# Bundle the Yoga's Qualcomm board firmware, if present on the build host. These blobs are
+# Bundle Qualcomm board firmware, if present on the build host. These blobs are
 # proprietary: the ISO is for private use only and must never be published. They come from
 # ~/swarmarchy-pkgs-build/local/firmware (see swarmarchy-iso-make) and are read by
 # swarmarchy-stage-qcom-firmware at install time. Without them that script falls back to
 # looking for a user-staged firmware/ directory on a second disk.
 if [[ -d /localpkgs/firmware ]]; then
   mkdir -p "$build_cache_dir/airootfs/usr/local/share/swarmarchy/firmware"
-  cp -p /localpkgs/firmware/* "$build_cache_dir/airootfs/usr/local/share/swarmarchy/firmware/"
+  # cp -a of the directory contents, so a per-board layout (x1e80100/LENOVO/83ED/...) survives.
+  cp -a /localpkgs/firmware/. "$build_cache_dir/airootfs/usr/local/share/swarmarchy/firmware/"
   echo "Bundled board firmware: $(ls /localpkgs/firmware | tr '\n' ' ')"
 else
   echo "No /localpkgs/firmware; the ISO will not bundle Qualcomm board firmware."
@@ -204,36 +205,33 @@ ln -s "$offline_mirror_dir" "/var/cache/swarmarchy/mirror/offline"
 # same config when booted. 
 cp $build_cache_dir/pacman-offline.conf "$build_cache_dir/airootfs/etc/pacman.conf"
 
-# aarch64 boot: the Snapdragon X Elite Yoga needs its board device tree handed to the kernel
-# by GRUB (`devicetree` in grub.cfg/loopback.cfg). mkarchiso copies any non-.cfg file from the
-# profile's grub/ dir verbatim into the ISO's /boot/grub/, so stage the DTB there. It ships
-# inside ALARM's linux-aarch64 package (already downloaded to the offline mirror) at
-# boot/dtbs/qcom/x1e80100-lenovo-yoga-slim7x.dtb.
-dtb_rel="boot/dtbs/qcom/x1e80100-lenovo-yoga-slim7x.dtb"
-linux_pkg=$(ls -1 "$offline_mirror_dir/"linux-aarch64-*.pkg.tar.* 2>/dev/null | grep -vE '\.sig$' | head -1)
+# aarch64 boot: Snapdragon X laptops boot via device tree, not ACPI, so GRUB must hand the
+# kernel the right board DTB (`devicetree` in grub.cfg/loopback.cfg). Stage every Snapdragon
+# X1/X2 DTB from ALARM's linux-aarch64 package (already in the offline mirror) into the
+# profile's grub/ dir -- mkarchiso copies non-.cfg files there verbatim into /boot/grub/ -- and
+# generate boards-match.cfg (SMBIOS -> DTB, from configs/boards.tsv) and boards-menu.cfg (a
+# manual pick for unmatched machines). See builder/generate-grub-boards.sh.
+# `[0-9]` keeps linux-aarch64-headers-* out of the match.
+linux_pkg=$(ls -1 "$offline_mirror_dir/"linux-aarch64-[0-9]*.pkg.tar.* 2>/dev/null | grep -vE '\.sig$' | head -1)
 if [[ -z "$linux_pkg" ]]; then
-  echo "ERROR: linux-aarch64 package not found in offline mirror; cannot extract board DTB." >&2
+  echo "ERROR: linux-aarch64 package not found in offline mirror; cannot extract board DTBs." >&2
   exit 1
 fi
-mkdir -p "$build_cache_dir/grub"
-bsdtar -xOf "$linux_pkg" "$dtb_rel" > "$build_cache_dir/grub/x1e80100-lenovo-yoga-slim7x.dtb"
-if [[ ! -s "$build_cache_dir/grub/x1e80100-lenovo-yoga-slim7x.dtb" ]]; then
-  echo "ERROR: extracted Yoga DTB is empty (expected $dtb_rel in $linux_pkg)." >&2
-  exit 1
-fi
+bash /builder/generate-grub-boards.sh "$linux_pkg" /configs/boards.tsv "$build_cache_dir/grub"
 
 # mkarchiso hardcodes the GRUB modules baked into the EFI core image (grubmodules=(...) in
 # _make_bootmode_uefi.grub). That static list is x86-centric: it includes `at_keyboard` (PS/2,
 # which has no arm64-efi .mod so grub-mkstandalone aborts) and omits `fdt` (which provides the
 # `devicetree` command the Snapdragon needs). Rather than hard-code an arm64 module list that
 # could drift with the grub package, inject a filter right after the array definition that adds
-# `fdt` and keeps only modules that actually have a .mod under /usr/lib/grub/$grub_target.
+# `fdt` and `smbios` (read by grub.cfg to pick the board DTB) and keeps only modules that
+# actually have a .mod under /usr/lib/grub/$grub_target.
 if ! grep -q 'SWARMARCHY_GRUBMOD_FILTER' /usr/bin/mkarchiso; then
   awk '
     { print }
     /usbserial_pl2303 usbserial_usbdebug video xfs zstd\)/ {
-      print "    # SWARMARCHY_GRUBMOD_FILTER: add fdt, keep only modules present for $grub_target"
-      print "    { local _gm=() _m; for _m in fdt \"${grubmodules[@]}\"; do [[ -f \"/usr/lib/grub/${grub_target}/${_m}.mod\" ]] && _gm+=(\"$_m\"); done; grubmodules=(\"${_gm[@]}\"); }"
+      print "    # SWARMARCHY_GRUBMOD_FILTER: add fdt + smbios, keep only modules present for $grub_target"
+      print "    { local _gm=() _m; for _m in fdt smbios \"${grubmodules[@]}\"; do [[ -f \"/usr/lib/grub/${grub_target}/${_m}.mod\" ]] && _gm+=(\"$_m\"); done; grubmodules=(\"${_gm[@]}\"); }"
     }
   ' /usr/bin/mkarchiso > /tmp/mkarchiso.patched && cat /tmp/mkarchiso.patched > /usr/bin/mkarchiso
 fi
