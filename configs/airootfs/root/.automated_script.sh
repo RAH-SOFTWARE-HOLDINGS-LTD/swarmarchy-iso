@@ -10,6 +10,13 @@ set -euo pipefail
 SWARMARCHY_SRC="/var/tmp/swarmarchy-src"
 SWARMARCHY_SRC_TARGET="/mnt${SWARMARCHY_SRC}"
 
+# The layer's board helper, from the live ISO's own copy of the layer. Not from
+# $SWARMARCHY_SRC_TARGET: cleanup-source.sh wipes that before the firmware is staged.
+# It reads the live device tree, which GRUB loaded for this exact board, so the
+# target gets the same DTB, kernel arguments and firmware list.
+SNAPDRAGON_HW="/root/swarmarchy/bin/swarmarchy-hw-snapdragon"
+export SNAPDRAGON_HW
+
 use_swarmarchy_helpers() {
   export SWARMARCHY_PATH="/root/swarmarchy"
   export SWARMARCHY_INSTALL="/root/swarmarchy/install"
@@ -44,20 +51,21 @@ install_swarmarchy() {
   chroot_bash -lc "sudo pacman -S --noconfirm --needed gum" >/dev/null
   chroot_bash -lc "SWARMARCHY_PATH=$SWARMARCHY_SRC source $SWARMARCHY_SRC/install.sh || bash"
 
-  # Stage the per-machine Qualcomm X Elite board firmware onto the new root. Licensing forbids
-  # shipping it in the ISO, so this sources the five board blobs from a user-staged qcom-firmware/
-  # dir or the dual-boot Windows DriverStore and drops them at the exact board path the msm /
-  # remoteproc drivers probe. Best-effort and non-fatal (no-op on non-Yoga hardware).
+  # Stage the board's own Qualcomm firmware onto the new root. Licensing forbids shipping it in
+  # the ISO, so this sources the blobs the board's device tree names (firmware-name) from the
+  # ISO's private bundle or a user-staged firmware/ dir (copy-qcom-firmware.ps1) and drops them
+  # at the exact paths the msm / remoteproc drivers probe. Best-effort and non-fatal (no-op on
+  # anything but Snapdragon X).
   #
   # Runs AFTER the installer, not before: swarmarchy-other.packages installs linux-firmware-qcom,
-  # which owns four of these five paths (adsp_dtbs.elf, qcadsp8380.mbn, qccdsp8380.mbn,
+  # which owns some of these paths (on the Yoga: adsp_dtbs.elf, qcadsp8380.mbn, qccdsp8380.mbn,
   # qcdxkmsuc8380.mbn). Staging first would leave them unowned and pacman would abort with
   # "exists in filesystem", failing swarmarchy-pkg-add and the whole userland install.
   #
-  # So the package lands first and supplies what no staged source has (the .jsn files, the audio
-  # tplg, qcav1e8380/qcvss8380); then the staged blobs overwrite its four overlapping copies,
-  # which are different builds -- see swarmarchy-stage-qcom-firmware for the sizes and why the
-  # machine-specific ones win -- and add cdsp_dtbs.elf, which no repo ships.
+  # So the package lands first and supplies what no staged source has; then the staged blobs
+  # overwrite its overlapping copies, which are different builds -- see
+  # swarmarchy-stage-qcom-firmware for the sizes and why the machine-specific ones win -- and
+  # are marked NoUpgrade so a package upgrade cannot put the package's builds back.
   swarmarchy-stage-qcom-firmware /mnt || true
 
   # Give the installed system real package repositories.
@@ -453,12 +461,26 @@ limit_target_firmware() {
   # registers through. A working install has ZERO .jsn on the search path and pd_mapper
   # uses its built-in x1e80100 table (PDR reports charger_pd and audio_pd up).
   #
-  # The board blobs come from the Windows DriverStore via swarmarchy-stage-qcom-firmware
-  # and differ from the package's, so the package must not ship those either.
-  # Measured effect of these rules: 557 MiB -> 25 MiB, 108 .jsn -> 0.
-  sed -i "/^\\[options\\]/a \\\n# Swarmarchy: keep only the Qualcomm firmware this board loads.\nNoExtract = usr/lib/firmware/qcom/*\nNoExtract = !usr/lib/firmware/qcom/gen70500*\nNoExtract = !usr/lib/firmware/qcom/x1e80100/*-tplg.bin\nNoExtract = !usr/lib/firmware/qcom/x1e80100/LENOVO/83ED/*-tplg.bin" /mnt/etc/pacman.conf
+  # Measured effect of the original Yoga-only rules: 557 MiB -> 25 MiB, 108 .jsn -> 0.
+  #
+  # Generic for every Snapdragon X board: keep ALL Adreno microcode (qcom/gen*, 20 files,
+  # 1.6 MiB in linux-firmware-qcom 20261019 -- the GPU generation differs by SoC) and ALL
+  # audio topologies (*-tplg.bin, 49 entries, 0.4 MiB; several are symlinks to each other,
+  # so keeping only one board's would break them). Still no .jsn. One rule per directory
+  # depth, so the keep rules hold whether or not pacman's `*` crosses `/`.
+  #
+  # Also keep every file this board's device tree requests (firmware-name). Reference boards
+  # (CRD, QCP, IoT EVK) get theirs ONLY from this package; on laptops the package copy is the
+  # fallback for anything swarmarchy-stage-qcom-firmware finds no Windows copy of. Files it
+  # does stage it overwrites and marks NoUpgrade, so package upgrades cannot undo that.
+  [[ -x $SNAPDRAGON_HW ]] && "$SNAPDRAGON_HW" soc >/dev/null 2>&1 || return 0
+  local keep_dt="" rel
+  while IFS= read -r rel; do
+    [[ $rel == qcom/* && $rel != *[[:space:]]* ]] && keep_dt+="\\nNoExtract = !usr/lib/firmware/$rel"
+  done < <("$SNAPDRAGON_HW" firmware)
+  sed -i "/^\\[options\\]/a \\\n# Swarmarchy: keep only the Qualcomm firmware Snapdragon X boards load.\nNoExtract = usr/lib/firmware/qcom/*\nNoExtract = !usr/lib/firmware/qcom/gen*\nNoExtract = !usr/lib/firmware/qcom/*-tplg.bin\nNoExtract = !usr/lib/firmware/qcom/*/*-tplg.bin\nNoExtract = !usr/lib/firmware/qcom/*/*/*-tplg.bin\nNoExtract = !usr/lib/firmware/qcom/*/*/*/*-tplg.bin${keep_dt}" /mnt/etc/pacman.conf
 
-  if ! grep -A8 '^\[options\]' /mnt/etc/pacman.conf | grep -q "^NoExtract = usr/lib/firmware/qcom/\*"; then
+  if ! grep -A10 '^\[options\]' /mnt/etc/pacman.conf | grep -q "^NoExtract = usr/lib/firmware/qcom/\*"; then
     echo "WARNING - qcom firmware NoExtract rules did not land in [options]" >&2
   fi
 }
@@ -503,14 +525,20 @@ install_dualboot_bootloader() {
   mkdir -p "$esp_dir"
   cp "$limine_efi" "$esp_dir/BOOTAA64.EFI"
 
-  # Board-gated kernel arguments. These are what the Yoga Slim 7x needs to boot;
-  # on anything else only the generic root= arguments are used.
+  # Board-gated kernel arguments and device tree, from swarmarchy-hw-snapdragon: the
+  # DTB GRUB booted this live system with (swarmarchy.dtb= on /proc/cmdline), checked
+  # to exist in the TARGET's /boot. On anything else only the generic root= arguments
+  # are used.
   local board_args=""
   local dtb_rel="" dtb_line=""
-  if grep -qa "x1e80100" /sys/firmware/devicetree/base/compatible 2>/dev/null; then
-    board_args=" pd_ignore_unused clk_ignore_unused fw_devlink=off efi=novamap cma=128M rootwait"
-    dtb_rel="boot/dtbs/qcom/x1e80100-lenovo-yoga-slim7x.dtb"
-    [[ -f "/mnt/$dtb_rel" ]] || dtb_rel=""
+  if [[ -x $SNAPDRAGON_HW ]] && "$SNAPDRAGON_HW" soc >/dev/null 2>&1; then
+    board_args=" $("$SNAPDRAGON_HW" cmdline)"
+    dtb_rel="$("$SNAPDRAGON_HW" dtb --boot /mnt/boot || true)"
+    [[ -n $dtb_rel ]] && dtb_rel="boot/$dtb_rel"
+    [[ -n $dtb_rel && -f "/mnt/$dtb_rel" ]] || {
+      echo "Dual-boot: WARNING - no board device tree found for $("$SNAPDRAGON_HW" soc | head -1); limine.conf gets no dtb_path" >&2
+      dtb_rel=""
+    }
   fi
   [[ -n $dtb_rel ]] && dtb_line="    dtb_path: boot():/${dtb_rel#boot/}"
 

@@ -1,42 +1,62 @@
 #!/bin/bash
-# swarmarchy-stage-qcom-firmware — provision the Snapdragon X Elite board firmware onto a
-# freshly-installed root at install time, from a user-staged directory.
+# swarmarchy-stage-qcom-firmware — provision a Snapdragon X board's proprietary Qualcomm
+# firmware onto a freshly-installed root at install time.
 #
-# The Lenovo Yoga Slim 7x (x1e80100, board LENOVO/83ED) needs five proprietary Qualcomm blobs
-# at an EXACT board path or you get: no external USB-C / DP-alt monitors, dead onboard audio
-# (the ADSP/CDSP remoteproc chain), and the GPU stuck on software rendering (the display MBN).
-# The bulk firmware copy does NOT land them there — they must sit, flattened, at the board path.
+# Which files, and where: the board's device tree names every blob it loads, at its exact
+# path, in `firmware-name` properties (read by swarmarchy-hw-snapdragon firmware). On the
+# Lenovo Yoga Slim 7x that is qcom/x1e80100/LENOVO/83ED/{qcadsp8380.mbn, adsp_dtbs.elf,
+# qccdsp8380.mbn, cdsp_dtbs.elf, qcdxkmsuc8380.mbn, qcvss8380.mbn}. Without them: no external
+# USB-C / DP-alt monitors and dead onboard audio (the ADSP/CDSP remoteproc chain), the GPU
+# stuck on software rendering (the zap shader), no video decode (qcvss). The bulk firmware
+# copy does NOT land them there; they must sit at the exact path the DT names.
 #
-# Qualcomm licensing forbids redistributing these, so they are NEVER in a published ISO. Two
-# sources, tried in order:
-#   1. Bundled: a PRIVATE build (swarmarchy-iso-make) copies them from the build host's
-#      ~/swarmarchy-pkgs-build/local/firmware into the ISO at $FW_BUNDLED.
-#   2. User-staged: run docs/copy-qcom-firmware.ps1 on Windows to collect them into a
-#      `firmware/` directory, then drop it onto any disk attached at install time (e.g. a
-#      second USB). This script scans the attached disks for it.
-# Either way the five board blobs end up at the path the msm / remoteproc drivers probe.
+# Qualcomm licensing forbids redistributing these, so they are NEVER in a published ISO.
+# Sources, tried in order:
+#   1. Bundled: a PRIVATE build (swarmarchy-iso-make) copies the build host's
+#      ~/swarmarchy-pkgs-build/local/firmware into the ISO at $FW_BUNDLED: one dir per board,
+#      keyed by the DT firmware dir, e.g. x1e80100/LENOVO/83ED/qcadsp8380.mbn. Only this
+#      board's dir is used.
+#   2. User-staged: run docs/copy-qcom-firmware.ps1 on THIS machine's Windows to collect them
+#      into a `firmware/` directory, then drop it onto any disk attached at install time (e.g.
+#      a second USB). This script scans the attached disks for it.
 #
-# Best-effort and NON-FATAL: on non-Yoga hardware, or when no staged `firmware/` is found, it
-# logs and exits 0 so the install still completes. See docs/05 §"External monitors (USB-C DP-alt)".
+# Windows' DriverStore can hold the same file name from several driver packages/versions.
+# The newest wins, by the LastWriteUtc column copy-qcom-firmware.ps1 writes to MANIFEST.csv;
+# without that column (older manifests) the first match in sorted path order is used. Copies
+# from the NPU package (qcnspmcdm*) are used only when no other copy exists: its
+# qccdsp8380.mbn is not the remoteproc CDSP image (docs/05 §"External monitors").
+#
+# Best-effort and NON-FATAL: on non-Snapdragon-X hardware, or when nothing is found, it logs
+# and exits 0 so the install still completes.
 #
 # Usage: swarmarchy-stage-qcom-firmware [TARGET_ROOT]   (default /mnt)
+# Test hooks: SNAPDRAGON_HW (helper path), SNAPDRAGON_DT_ROOT (device tree dir),
+#             FW_BUNDLED (bundled dir), FW_SCAN_DISKS=0 (skip the block-device scan).
 
 set -uo pipefail
 
 TARGET="${1:-/mnt}"
-BOARD_REL="lib/firmware/qcom/x1e80100/LENOVO/83ED"
-BOARD_DIR="$TARGET/$BOARD_REL"
-
-# The exact blobs the msm (GPU/display) + remoteproc (ADSP/CDSP → Type-C DP-alt + audio) drivers
-# probe for at the board path. Names are stable across X Elite DriverStore packages.
-REQUIRED=(qcadsp8380.mbn adsp_dtbs.elf qccdsp8380.mbn cdsp_dtbs.elf qcdxkmsuc8380.mbn)
+FW_BUNDLED="${FW_BUNDLED:-/usr/local/share/swarmarchy/firmware}"
 
 log() { printf '  [qcom-fw] %s\n' "$*"; }
 
-# --- only meaningful on the X Elite; skip quietly elsewhere so the ISO stays generic ---
-if [[ -r /sys/firmware/devicetree/base/compatible ]] \
-   && ! tr '\0' '\n' </sys/firmware/devicetree/base/compatible | grep -q 'x1e80100'; then
-  log "not a Snapdragon X Elite (no x1e80100 in DT compatible); skipping firmware staging."
+HW="${SNAPDRAGON_HW:-/root/swarmarchy/bin/swarmarchy-hw-snapdragon}"
+[[ -x $HW ]] || HW="$(command -v swarmarchy-hw-snapdragon 2>/dev/null || true)"
+if [[ -z $HW ]]; then
+  log "swarmarchy-hw-snapdragon not found; skipping firmware staging."
+  exit 0
+fi
+hw() { "$HW" "$@" ${SNAPDRAGON_DT_ROOT:+--dt-root "$SNAPDRAGON_DT_ROOT"}; }
+
+# --- only meaningful on Snapdragon X; skip quietly elsewhere so the ISO stays generic ---
+if ! soc="$(hw soc | head -1)" || [[ -z $soc ]]; then
+  log "not a Snapdragon X board (no x1e/x1p/glymur SoC in the DT compatible); skipping firmware staging."
+  exit 0
+fi
+
+mapfile -t REQUIRED < <(hw firmware)
+if (( ${#REQUIRED[@]} == 0 )); then
+  log "the $soc device tree requests no firmware files; nothing to stage."
   exit 0
 fi
 
@@ -49,116 +69,192 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Root device backing the install target — never scan/remount it or its siblings.
-target_src="$(findmnt -no SOURCE --target "$TARGET" 2>/dev/null | sed 's/\[.*//')"
-target_disk="$(lsblk -no PKNAME "$target_src" 2>/dev/null | head -1)"
-
-# Mount a partition read-only; echo its mountpoint on success.
-try_mount_ro() {
-  local dev="$1" mp="$WORK/mnt-${1//\//_}"
-  mkdir -p "$mp"
-  if mount -o ro "$dev" "$mp" 2>/dev/null; then
-    MOUNTS+=("$mp"); echo "$mp"; return 0
-  fi
-  rmdir "$mp" 2>/dev/null || true
-  return 1
-}
-
-# Blobs this run has already staged, one name per line. A FILE, not an array: place_from_tree
-# is called inside $( ), so it runs in a subshell and an array assignment would not survive.
+# Paths this run has already staged, one per line. A FILE, not an array: place_from_tree is
+# called inside $( ), so it runs in a subshell and an array assignment would not survive.
 STAGED_LIST="$WORK/staged"
 : >"$STAGED_LIST"
 
-# Copy each required blob (flattened, first match wins) out of a source tree into the board dir.
-# Echoes the count present afterwards.
+# LastWriteUtc for a file, looked up in the MANIFEST.csv at the root of its staged tree by
+# RelPath (forward slashes, relative to that root). Prints nothing when the manifest, its
+# columns or the row are missing. Quoted-CSV aware (Export-Csv quotes every field).
+manifest_date() {
+  local root="$1" rel="$2" manifest="$1/MANIFEST.csv"
+  [[ -f $manifest ]] || return 0
+  awk -v want="$rel" 'BEGIN { FPAT = "([^,]*)|(\"([^\"]|\"\")*\")" }
+    function unq(s) { gsub(/^"|"$/, "", s); gsub(/""/, "\"", s); sub(/\r$/, "", s); return s }
+    NR == 1 { for (i = 1; i <= NF; i++) col[unq($i)] = i; if (!("RelPath" in col) || !("LastWriteUtc" in col)) exit; next }
+    tolower(unq($col["RelPath"])) == tolower(want) { print unq($col["LastWriteUtc"]); exit }' "$manifest"
+}
+
+# Choose one file from candidate paths (all under $root). Logs the choice when there is one.
+pick_candidate() {
+  local root="$1" base="$2"; shift 2
+  local -a all=("$@") pool=() dated=()
+  local c d
+
+  (( ${#all[@]} == 1 )) && { echo "${all[0]}"; return; }
+
+  for c in "${all[@]}"; do [[ ${c,,} == */qcnspmcdm* ]] || pool+=("$c"); done
+  if (( ${#pool[@]} == 0 )); then
+    pool=("${all[@]}")
+  elif (( ${#pool[@]} < ${#all[@]} )); then
+    log "$base: ignoring $(( ${#all[@]} - ${#pool[@]} )) copy/copies from the NPU package (qcnspmcdm*)" >&2
+  fi
+  (( ${#pool[@]} == 1 )) && { echo "${pool[0]}"; return; }
+
+  for c in "${pool[@]}"; do
+    d="$(manifest_date "$root" "${c#"$root"/}")"
+    if [[ -z $d ]]; then
+      log "$base: ${#pool[@]} copies and no LastWriteUtc in MANIFEST.csv; using the first: ${pool[0]#"$root"/}" >&2
+      echo "${pool[0]}"
+      return
+    fi
+    dated+=("$d"$'\t'"$c")
+  done
+  c="$(printf '%s\n' "${dated[@]}" | sort -r | head -1 | cut -f2-)"
+  log "$base: ${#pool[@]} copies; newest by LastWriteUtc is ${c#"$root"/}" >&2
+  printf '%s\n' "${dated[@]}" | sort -r | while IFS=$'\t' read -r d c; do log "    $d ${c#"$root"/}"; done >&2
+  echo "$c"
+}
+
+# Stage each required file found in a source tree. Echoes how many are present afterwards.
 #
-# Deliberately OVERWRITES what linux-firmware-qcom put here. That package ships four of the five
-# board blobs, but they are different builds from the ones extracted off this machine's Windows
-# DriverStore -- adsp_dtbs.elf 40760 vs 73528 bytes, qcadsp8380.mbn 21592504 vs 22063544, and a
-# different zap shader (qcdxkmsuc8380.mbn), which docs/05 notes is signed and model-specific. The
-# machine-specific blobs are the ones proven to work on this board, so they win; the package still
-# supplies what no staged source has (the .jsn files, the audio tplg, qcav1e8380/qcvss8380).
+# Deliberately OVERWRITES what linux-firmware-qcom put at these paths. That package ships some
+# of a board's blobs, but different builds from the ones on that machine's Windows (on the
+# Yoga: adsp_dtbs.elf 40760 vs 73528 bytes, qcadsp8380.mbn 21592504 vs 22063544, and a
+# different, signed, model-specific zap shader qcdxkmsuc8380.mbn). The machine's own blobs are
+# the ones proven to work, so they win.
 #
 # The skip is therefore "did WE already stage this", not "does a file exist" -- otherwise the
 # package's copies would block the staged ones, while still letting a second staging source
 # redundantly overwrite the first.
 place_from_tree() {
-  local root="$1" placed=0 f src
-  for f in "${REQUIRED[@]}"; do
-    grep -qxF "$f" "$STAGED_LIST" 2>/dev/null && { placed=$((placed + 1)); continue; }
-    src="$(find "$root" -type f -iname "$f" 2>/dev/null | head -1)"
-    if [[ -n "$src" ]] && install -Dm644 "$src" "$BOARD_DIR/$f" 2>/dev/null; then
+  local root="$1" mode="${2:-whole}" placed=0 rel base src search_root board_dir
+  local -a cands
+
+  # mode=per-board: a bundled tree laid out by DT firmware dir (x1e80100/LENOVO/83ED/...)
+  # holds several boards' same-named blobs, so each file is looked up only in its own dir.
+  # mode=whole: a Windows-staged tree (DriverStore package dirs) is one
+  # machine's and is searched whole by file name.
+
+  for rel in "${REQUIRED[@]}"; do
+    grep -qxF "$rel" "$STAGED_LIST" 2>/dev/null && { placed=$((placed + 1)); continue; }
+    base="${rel##*/}"
+    search_root="$root"
+    if [[ $mode == per-board ]]; then
+      board_dir="${rel#qcom/}"; board_dir="${board_dir%/*}"
+      [[ -d $root/$board_dir ]] || continue
+      search_root="$root/$board_dir"
+      mapfile -t cands < <(find "$search_root" -maxdepth 1 -type f -iname "$base" 2>/dev/null | sort)
+    else
+      mapfile -t cands < <(find "$search_root" -type f -iname "$base" 2>/dev/null | sort)
+    fi
+    (( ${#cands[@]} )) || continue
+    src="$(pick_candidate "$root" "$base" "${cands[@]}")"
+    if [[ -n $src ]] && install -Dm644 "$src" "$TARGET/lib/firmware/$rel" 2>/dev/null; then
       placed=$((placed + 1))
-      echo "$f" >>"$STAGED_LIST"
+      echo "$rel" >>"$STAGED_LIST"
     fi
   done
   echo "$placed"
 }
 
-# True once all five blobs are present at the board path.
 all_present() {
-  local f
-  for f in "${REQUIRED[@]}"; do [[ -f "$BOARD_DIR/$f" ]] || return 1; done
+  local rel
+  for rel in "${REQUIRED[@]}"; do grep -qxF "$rel" "$STAGED_LIST" || return 1; done
   return 0
 }
 
-mkdir -p "$BOARD_DIR"
+log "$soc board requests ${#REQUIRED[@]} firmware file(s) under /lib/firmware/${REQUIRED[0]%/*}"
 
 # --- 1. Firmware bundled into this ISO at build time ---
-FW_BUNDLED="${FW_BUNDLED:-/usr/local/share/swarmarchy/firmware}"
-if [[ -d "$FW_BUNDLED" ]]; then
-  n="$(place_from_tree "$FW_BUNDLED")"
-  log "bundled firmware: $n/${#REQUIRED[@]} blob(s) placed"
+# Laid out by DT firmware dir (x1e80100/LENOVO/83ED/qcadsp8380.mbn), so each board only ever
+# gets its own signed blobs. Loose files at the top of the tree belong to no board and are
+# ignored: matching by file name alone would put one laptop's blobs on another.
+if [[ -d $FW_BUNDLED ]]; then
+  n="$(place_from_tree "$FW_BUNDLED" per-board)"
+  log "bundled firmware: $n/${#REQUIRED[@]} file(s) placed"
+  if (( n == 0 )) && find "$FW_BUNDLED" -mindepth 1 -maxdepth 1 -type f | grep -q .; then
+    log "bundled firmware has loose top-level files; it must be laid out as <dt dir>/<file>, e.g. ${REQUIRED[0]#qcom/}"
+  fi
 fi
 
 # --- 2. Otherwise scan attached disks for a user-staged firmware/ directory ---
-if ! all_present; then
+# Root device backing the install target — never scan/remount it or its siblings.
+if ! all_present && [[ ${FW_SCAN_DISKS:-1} != 0 ]]; then
+  target_src="$(findmnt -no SOURCE --target "$TARGET" 2>/dev/null | sed 's/\[.*//')"
+  target_disk="$(lsblk -no PKNAME "$target_src" 2>/dev/null | head -1)"
 
-# --- Scan attached filesystems for the user-staged `firmware/` directory ---
-# `firmware/` is what docs/copy-qcom-firmware.ps1 produces (it also writes a MANIFEST.csv there).
-# We skip the disk we're installing onto, and confirm a candidate by actually finding the blobs
-# inside it (place_from_tree) — so an unrelated `firmware/` folder simply matches nothing.
-while read -r name fstype; do
-  [[ -z "$name" ]] && continue
-  dev="/dev/$name"
-  [[ "$name" == "$target_disk" ]] && continue
-  [[ -n "$target_disk" && "$(lsblk -no PKNAME "$dev" 2>/dev/null | head -1)" == "$target_disk" ]] && continue
-  case "$fstype" in
-    swap | crypto_LUKS | squashfs | iso9660 | linux_raid_member | LVM2_member) continue ;;
-  esac
-  mp="$(try_mount_ro "$dev")" || continue
-  # Prefer a `firmware/` dir carrying the .ps1's MANIFEST.csv, else any `firmware/` dir.
-  fwroot="$(find "$mp" -maxdepth 4 -type f -iname 'MANIFEST.csv' -path '*/firmware/*' 2>/dev/null | head -1)"
-  fwroot="${fwroot%/MANIFEST.csv}"
-  [[ -z "$fwroot" ]] && fwroot="$(find "$mp" -maxdepth 3 -type d -iname 'firmware' 2>/dev/null | head -1)"
-  if [[ -n "$fwroot" ]]; then
-    n="$(place_from_tree "$fwroot")"
-    if [[ "$n" -gt 0 ]]; then
-      log "staged $n/${#REQUIRED[@]} blob(s) from ${dev} (staged firmware/)"
-      all_present && break
+  try_mount_ro() {
+    local dev="$1" mp="$WORK/mnt-${1//\//_}"
+    mkdir -p "$mp"
+    if mount -o ro "$dev" "$mp" 2>/dev/null; then
+      MOUNTS+=("$mp"); echo "$mp"; return 0
     fi
+    rmdir "$mp" 2>/dev/null || true
+    return 1
+  }
+
+  # `firmware/` is what docs/copy-qcom-firmware.ps1 produces (it also writes MANIFEST.csv
+  # there). A candidate is confirmed by actually finding the blobs inside it, so an unrelated
+  # `firmware/` folder simply matches nothing.
+  while read -r name fstype; do
+    [[ -z $name ]] && continue
+    dev="/dev/$name"
+    [[ $name == "$target_disk" ]] && continue
+    [[ -n $target_disk && "$(lsblk -no PKNAME "$dev" 2>/dev/null | head -1)" == "$target_disk" ]] && continue
+    case "$fstype" in
+      swap | crypto_LUKS | squashfs | iso9660 | linux_raid_member | LVM2_member) continue ;;
+    esac
+    mp="$(try_mount_ro "$dev")" || continue
+    # Prefer a `firmware/` dir carrying the .ps1's MANIFEST.csv, else any `firmware/` dir.
+    fwroot="$(find "$mp" -maxdepth 4 -type f -iname 'MANIFEST.csv' -path '*/firmware/*' 2>/dev/null | head -1)"
+    fwroot="${fwroot%/*}"
+    [[ -z $fwroot ]] && fwroot="$(find "$mp" -maxdepth 3 -type d -iname 'firmware' 2>/dev/null | head -1)"
+    if [[ -n $fwroot ]]; then
+      n="$(place_from_tree "$fwroot")"
+      if (( n > 0 )); then
+        log "staged $n/${#REQUIRED[@]} file(s) from ${dev} (staged firmware/)"
+        all_present && break
+      fi
+    fi
+  done < <(lsblk -rno NAME,FSTYPE | awk 'NF==2')
+fi
+
+# --- protect what was staged from package upgrades ---
+# linux-firmware-qcom may ship its own build at these paths (kept by the installer's NoExtract
+# rules as a fallback). NoUpgrade makes pacman leave the staged machine-specific file in place
+# and write the package's copy as .pacnew instead. Inserted directly after [options]:
+# appended at the end it would land in a repo section, where pacman ignores it.
+conf="$TARGET/etc/pacman.conf"
+if [[ -s $STAGED_LIST && -f $conf ]] && grep -q '^\[options\]' "$conf"; then
+  lines=""
+  while IFS= read -r rel; do
+    grep -qxF "NoUpgrade = usr/lib/firmware/$rel" "$conf" || lines+="\\nNoUpgrade = usr/lib/firmware/$rel"
+  done <"$STAGED_LIST"
+  if [[ -n $lines ]]; then
+    sed -i "/^\\[options\\]/a \\\n# Swarmarchy: board firmware staged from Windows; never let linux-firmware-qcom replace it.${lines}" "$conf"
+    log "marked $(wc -l <"$STAGED_LIST") staged file(s) NoUpgrade in /etc/pacman.conf"
   fi
-done < <(lsblk -rno NAME,FSTYPE | awk 'NF==2')
 fi
 
 # --- report ---
-placed_now=0
 missing=()
-for f in "${REQUIRED[@]}"; do
-  if [[ -f "$BOARD_DIR/$f" ]]; then placed_now=$((placed_now + 1)); else missing+=("$f"); fi
+for rel in "${REQUIRED[@]}"; do
+  grep -qxF "$rel" "$STAGED_LIST" || missing+=("${rel##*/}")
 done
+placed_now=$(( ${#REQUIRED[@]} - ${#missing[@]} ))
 
-if [[ "$placed_now" -eq 0 ]]; then
-  rmdir "$BOARD_DIR" 2>/dev/null || true # don't leave an empty board dir behind
-  log "no staged firmware/ found on any attached disk."
-  log "external monitors / audio / GPU accel will not work until you place the five blobs at"
-  log "  /$BOARD_REL"
-  log "Run docs/copy-qcom-firmware.ps1 on Windows, put the firmware/ dir on the USB, reinstall —"
-  log "or copy them by hand later; see docs/05 §External monitors."
-elif [[ ${#missing[@]} -gt 0 ]]; then
-  log "WARNING: staged $placed_now/${#REQUIRED[@]}; still missing: ${missing[*]}"
+if (( placed_now == 0 )); then
+  log "no bundled or staged firmware found for this board."
+  log "external monitors / audio / GPU accel may not work until these are placed under"
+  log "  /lib/firmware/${REQUIRED[0]%/*}: ${missing[*]}"
+  log "Run docs/copy-qcom-firmware.ps1 on this machine's Windows, put the firmware/ dir on a"
+  log "USB stick and reinstall -- or copy them by hand later; see docs/05 §External monitors."
+elif (( ${#missing[@]} )); then
+  log "WARNING: staged $placed_now/${#REQUIRED[@]}; not found in any source: ${missing[*]}"
 else
-  log "all ${#REQUIRED[@]} board blobs staged at /$BOARD_REL ✓"
+  log "all ${#REQUIRED[@]} board firmware files staged under /lib/firmware/${REQUIRED[0]%/*} ✓"
 fi
 
 exit 0
