@@ -217,7 +217,8 @@ if [[ -z "$linux_pkg" ]]; then
   echo "ERROR: linux-aarch64 package not found in offline mirror; cannot extract board DTBs." >&2
   exit 1
 fi
-bash /builder/generate-grub-boards.sh "$linux_pkg" /configs/boards.tsv "$build_cache_dir/grub"
+bash /builder/generate-grub-boards.sh "$linux_pkg" /configs/boards.tsv "$build_cache_dir/grub" \
+  "$build_cache_dir/airootfs/root/swarmarchy/bin/swarmarchy-hw-snapdragon"
 
 # mkarchiso hardcodes the GRUB modules baked into the EFI core image (grubmodules=(...) in
 # _make_bootmode_uefi.grub). That static list is x86-centric: it includes `at_keyboard` (PS/2,
