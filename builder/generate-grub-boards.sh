@@ -9,7 +9,7 @@
 #
 # The board boots via device tree, not ACPI, and the DTB must be handed over before Linux
 # starts -- so the choice can only be made here, in GRUB. Each entry also passes
-# swarmarchy.dtb=dtbs/qcom/<file> on the kernel cmdline so the installer
+# swarmarchy.devicetree=dtbs/qcom/<file> on the kernel cmdline so the installer
 # (swarmarchy-hw-snapdragon dtb) knows which DTB the live system booted with.
 #
 # mkarchiso copies non-.cfg files in grub/ verbatim and runs its %INSTALL_DIR%/%ARCH%
@@ -76,7 +76,7 @@ done <"$boards_tsv" >>"$match"
     cat <<EOF
 menuentry "Swarmarchy on ${label} (${f%.dtb})" --class arch --class gnu-linux --class gnu --class os {
     set gfxpayload=keep
-    linux /%INSTALL_DIR%/boot/%ARCH%/vmlinuz-linux \${swarm_linux_args} swarmarchy.dtb=dtbs/qcom/${f}
+    linux /%INSTALL_DIR%/boot/%ARCH%/vmlinuz-linux \${swarm_linux_args} swarmarchy.devicetree=dtbs/qcom/${f}
     initrd /%INSTALL_DIR%/boot/%ARCH%/initramfs-linux.img
     devicetree /boot/grub/${f}
 }

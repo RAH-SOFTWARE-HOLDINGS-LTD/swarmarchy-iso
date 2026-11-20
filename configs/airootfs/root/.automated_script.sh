@@ -526,7 +526,7 @@ install_dualboot_bootloader() {
   cp "$limine_efi" "$esp_dir/BOOTAA64.EFI"
 
   # Board-gated kernel arguments and device tree, from swarmarchy-hw-snapdragon: the
-  # DTB GRUB booted this live system with (swarmarchy.dtb= on /proc/cmdline), checked
+  # DTB GRUB booted this live system with (swarmarchy.devicetree= on /proc/cmdline), checked
   # to exist in the TARGET's /boot. On anything else only the generic root= arguments
   # are used.
   local board_args=""
