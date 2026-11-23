@@ -152,6 +152,12 @@ all_packages=($(cat "$build_cache_dir/packages.$ARCH"))
 strip_pkgs() { grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$1" | awk '{print $1}'; }
 all_packages+=($(strip_pkgs "$build_cache_dir/airootfs/root/swarmarchy/install/swarmarchy-base.packages"))
 all_packages+=($(strip_pkgs "$build_cache_dir/airootfs/root/swarmarchy/install/swarmarchy-other.packages"))
+# The optional features (asked up front in the configurator) install offline too. Without
+# these the package helper fell back to yay, which during the install sees only the offline
+# repo, treated every repo dependency as missing and crashed after a 193 s AUR spiral
+# (2026-11-23 install: containers.sh).
+all_packages+=($(strip_pkgs "$build_cache_dir/airootfs/root/swarmarchy/install/swarmarchy-containers.packages"))
+all_packages+=($(strip_pkgs "$build_cache_dir/airootfs/root/swarmarchy/install/swarmarchy-printing.packages"))
 all_packages+=($(strip_pkgs /builder/archinstall.packages))
 
 # Download all the packages to the offline mirror inside the ISO.

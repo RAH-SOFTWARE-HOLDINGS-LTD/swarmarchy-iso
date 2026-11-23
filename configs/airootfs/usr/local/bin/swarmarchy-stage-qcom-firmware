@@ -41,12 +41,13 @@ FW_BUNDLED="${FW_BUNDLED:-/usr/local/share/swarmarchy/firmware}"
 log() { printf '  [qcom-fw] %s\n' "$*"; }
 
 HW="${SNAPDRAGON_HW:-/root/swarmarchy/bin/swarmarchy-hw-snapdragon}"
-[[ -x $HW ]] || HW="$(command -v swarmarchy-hw-snapdragon 2>/dev/null || true)"
+# -r, not -x, and run through bash: the live ISO copy is mode 644 (mkarchiso --no-preserve=mode).
+[[ -r $HW ]] || HW="$(command -v swarmarchy-hw-snapdragon 2>/dev/null || true)"
 if [[ -z $HW ]]; then
   log "swarmarchy-hw-snapdragon not found; skipping firmware staging."
   exit 0
 fi
-hw() { "$HW" "$@" ${SNAPDRAGON_DT_ROOT:+--dt-root "$SNAPDRAGON_DT_ROOT"}; }
+hw() { bash "$HW" "$@" ${SNAPDRAGON_DT_ROOT:+--dt-root "$SNAPDRAGON_DT_ROOT"}; }
 
 # --- only meaningful on Snapdragon X; skip quietly elsewhere so the ISO stays generic ---
 if ! soc="$(hw soc | head -1)" || [[ -z $soc ]]; then

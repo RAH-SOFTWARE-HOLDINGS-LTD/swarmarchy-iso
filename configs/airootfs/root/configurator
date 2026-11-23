@@ -27,6 +27,15 @@ notice() {
   echo
 }
 
+# STEP 0: WI-FI (only when offline)
+#
+# The install works from the ISO's offline repo, but the failure-log upload needs a network.
+# Shown under the Swarmarchy logo, like every other step; swarmarchy-live-wifi exits silently
+# when already online and always exits 0.
+clear_logo
+echo
+swarmarchy-live-wifi || true
+
 # STEP 1: KEYBOARD LAYOUT
 
 keyboard_form() {

@@ -14,6 +14,10 @@ SWARMARCHY_SRC_TARGET="/mnt${SWARMARCHY_SRC}"
 # $SWARMARCHY_SRC_TARGET: cleanup-source.sh wipes that before the firmware is staged.
 # It reads the live device tree, which GRUB loaded for this exact board, so the
 # target gets the same DTB, kernel arguments and firmware list.
+# Always run it through `bash` and test only that it is readable: mkarchiso copies the
+# airootfs with `cp --no-preserve=mode`, so everything under /root/swarmarchy/bin is mode 644
+# in the live system. An `-x` test there silently skipped the board kernel arguments, the
+# per-board DTB, the NoExtract rules and firmware staging (2026-11-23 install).
 SNAPDRAGON_HW="/root/swarmarchy/bin/swarmarchy-hw-snapdragon"
 export SNAPDRAGON_HW
 
@@ -27,9 +31,6 @@ use_swarmarchy_helpers() {
 
 run_configurator() {
   set_tokyo_night_colors
-  # Offer Wi-Fi first, only when offline: the install itself needs no network, but the
-  # failure-log upload does. Never fatal (the helper always exits 0; || true guards set -e).
-  swarmarchy-live-wifi || true
   ./configurator
   export SWARMARCHY_USER="$(jq -r '.users[0].username' user_credentials.json)"
 }
@@ -301,7 +302,10 @@ luks_prepare_root() {
   cryptsetup close "$SWARM_LUKS_NAME" 2>/dev/null || true
 
   echo "Dual-boot: encrypting $part with LUKS2" >&2
-  if ! cryptsetup luksFormat --type luks2 --batch-mode \
+  # --label: the btrfs inside carries SWARM_ROOT_LABEL too, but lsblk on the raw disk only
+  # sees the container. Without a container label the configurator's reinstall detection
+  # (find_previous_swarmarchy) could not find an encrypted root the next time.
+  if ! cryptsetup luksFormat --type luks2 --batch-mode --label "$SWARM_ROOT_LABEL" \
          --key-file user_luks_password.txt "$part" >&2; then
     echo "Dual-boot: luksFormat failed on $part" >&2
     return 1
@@ -476,11 +480,11 @@ limit_target_firmware() {
   # (CRD, QCP, IoT EVK) get theirs ONLY from this package; on laptops the package copy is the
   # fallback for anything swarmarchy-stage-qcom-firmware finds no Windows copy of. Files it
   # does stage it overwrites and marks NoUpgrade, so package upgrades cannot undo that.
-  [[ -x $SNAPDRAGON_HW ]] && "$SNAPDRAGON_HW" soc >/dev/null 2>&1 || return 0
+  [[ -r $SNAPDRAGON_HW ]] && bash "$SNAPDRAGON_HW" soc >/dev/null 2>&1 || return 0
   local keep_dt="" rel
   while IFS= read -r rel; do
     [[ $rel == qcom/* && $rel != *[[:space:]]* ]] && keep_dt+="\\nNoExtract = !usr/lib/firmware/$rel"
-  done < <("$SNAPDRAGON_HW" firmware)
+  done < <(bash "$SNAPDRAGON_HW" firmware)
   sed -i "/^\\[options\\]/a \\\n# Swarmarchy: keep only the Qualcomm firmware Snapdragon X boards load.\nNoExtract = usr/lib/firmware/qcom/*\nNoExtract = !usr/lib/firmware/qcom/gen*\nNoExtract = !usr/lib/firmware/qcom/*-tplg.bin\nNoExtract = !usr/lib/firmware/qcom/*/*-tplg.bin\nNoExtract = !usr/lib/firmware/qcom/*/*/*-tplg.bin\nNoExtract = !usr/lib/firmware/qcom/*/*/*/*-tplg.bin${keep_dt}" /mnt/etc/pacman.conf
 
   if ! grep -A10 '^\[options\]' /mnt/etc/pacman.conf | grep -q "^NoExtract = usr/lib/firmware/qcom/\*"; then
@@ -534,12 +538,12 @@ install_dualboot_bootloader() {
   # are used.
   local board_args=""
   local dtb_rel="" dtb_line=""
-  if [[ -x $SNAPDRAGON_HW ]] && "$SNAPDRAGON_HW" soc >/dev/null 2>&1; then
-    board_args=" $("$SNAPDRAGON_HW" cmdline)"
-    dtb_rel="$("$SNAPDRAGON_HW" dtb --boot /mnt/boot || true)"
+  if [[ -r $SNAPDRAGON_HW ]] && bash "$SNAPDRAGON_HW" soc >/dev/null 2>&1; then
+    board_args=" $(bash "$SNAPDRAGON_HW" cmdline)"
+    dtb_rel="$(bash "$SNAPDRAGON_HW" dtb --boot /mnt/boot || true)"
     [[ -n $dtb_rel ]] && dtb_rel="boot/$dtb_rel"
     [[ -n $dtb_rel && -f "/mnt/$dtb_rel" ]] || {
-      echo "Dual-boot: WARNING - no board device tree found for $("$SNAPDRAGON_HW" soc | head -1); limine.conf gets no dtb_path" >&2
+      echo "Dual-boot: WARNING - no board device tree found for $(bash "$SNAPDRAGON_HW" soc | head -1); limine.conf gets no dtb_path" >&2
       dtb_rel=""
     }
   fi
