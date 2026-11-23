@@ -10,6 +10,13 @@ linux-firmware-atheros  # REQUIRED: Wi-Fi (WCN785x via ath12k_wifi7_pci) + Bluet
 linux-firmware-cirrus   # REQUIRED: CS35L41 speaker amps
 #                         -whence is a hard dep of both, so it arrives automatically.
 #                         -other dropped: 44.7 MiB of 3com/Adaptec/DVB/Myricom-era hardware.
+# archinstall hardcodes `linux-firmware` in every install (installer.py __packages__), so the
+# offline repo must answer that name or pacstrap fails before installing anything. It does so
+# with this small local package (provides=linux-firmware; depends atheros, cirrus, qcom,
+# whence) instead of upstream's 1.2 GiB meta. Built from
+# ~/swarmarchy-pkgs-build/work/swarmarchy-firmware and picked up from /localpkgs, since no
+# online repo carries it yet.
+swarmarchy-firmware  # REQUIRED: stands in for the linux-firmware metapackage
 alsa-firmware      # extra sound-card firmware
 limine             # the bootloader (installed to the target disk)
 efibootmgr         # create/edit UEFI boot entries during install
