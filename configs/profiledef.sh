@@ -20,7 +20,7 @@ airootfs_image_type="squashfs"
 # stops before the installer -- on the Yoga that is a black screen, since the display driver
 # never loads. Every ISO built with zstd (2026-11-04 onwards) failed this way. The kernel
 # reads xz, lz4, lzo and zlib; xz is what the last ISO known to boot (2026-10-28) used.
-airootfs_image_tool_options=('-comp' 'lz4' '-Xhc' '-b' '1M')
+airootfs_image_tool_options=('-comp' 'xz' '-b' '1M' '-Xdict-size' '1M')
 bootstrap_tarball_compression=('zstd' '-c' '-T0' '--auto-threads=logical' '--long' '-19')
 file_permissions=(
   ["/etc/shadow"]="0:0:400"
