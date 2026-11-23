@@ -33,4 +33,5 @@ file_permissions=(
   ["/usr/local/bin/swarmarchy-upload-log"]="0:0:755"
   ["/usr/local/bin/swarmarchy-upload-file"]="0:0:755"
   ["/usr/local/bin/swarmarchy-stage-qcom-firmware"]="0:0:755"
+  ["/usr/local/bin/swarmarchy-live-wifi"]="0:0:755"
 )

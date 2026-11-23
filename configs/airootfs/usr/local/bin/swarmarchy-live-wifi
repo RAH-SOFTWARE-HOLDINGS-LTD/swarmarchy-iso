@@ -1,0 +1,86 @@
+#!/bin/bash
+# swarmarchy-live-wifi — offer to join Wi-Fi in the live installer, but only when offline.
+#
+# The install itself works from the ISO's offline repo, so nothing ever asked for a
+# network -- and then the failure-log upload (swarmarchy-upload-log -> dpaste.org) could
+# never resolve its host. Run first thing on tty1 (run_configurator): if a name already
+# resolves (wired network, or already joined) it exits silently; otherwise it offers to
+# join a Wi-Fi network through iwd, which the live system already runs together with
+# systemd-networkd (DHCP) and systemd-resolved (DNS), as upstream archiso does.
+#
+# Never fatal: every path, including Skip and every failure, exits 0.
+#
+# Test hooks: SWARMARCHY_WIFI_WAIT (seconds to wait for DNS, default 20).
+
+set -uo pipefail
+
+WAIT="${SWARMARCHY_WIFI_WAIT:-20}"
+CHECK_HOST="archlinux.org"
+
+online() { getent hosts "$CHECK_HOST" >/dev/null 2>&1; }
+
+online && exit 0
+command -v iwctl >/dev/null 2>&1 || exit 0
+command -v gum >/dev/null 2>&1 || exit 0
+
+rfkill unblock wifi 2>/dev/null || true
+
+# First wireless interface, from sysfs (no output parsing).
+dev=""
+for d in /sys/class/net/*; do
+  [[ -d $d/wireless || -e $d/phy80211 ]] && { dev="${d##*/}"; break; }
+done
+[[ -n $dev ]] || exit 0
+
+# iwctl's tables carry ANSI colour codes and a header. Keep the rows, drop the "> "
+# marker of the connected network, and split off the last two columns (security,
+# signal bars) so network names with spaces survive. Prints "security<TAB>name".
+list_networks() {
+  iwctl station "$dev" get-networks 2>/dev/null \
+    | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' \
+    | awk '/^ *-{5,}/ { body = 1; next } body && NF >= 3' \
+    | sed -E 's/^[[:space:]]*>?[[:space:]]*//; s/[[:space:]]+$//' \
+    | sed -nE 's/^(.*[^[:space:]])[[:space:]]+(psk|open|8021x|wep|sae|owe)[[:space:]]+\**$/\2\t\1/p'
+}
+
+wait_online() {
+  local i
+  for (( i = 0; i < WAIT; i++ )); do
+    online && return 0
+    sleep 1
+  done
+  return 1
+}
+
+gum confirm "No internet connection. Connect to Wi-Fi now? (Optional: the install works offline; this is only needed to upload a log if it fails.)" \
+  --affirmative "Connect" --negative "Skip" || exit 0
+
+while :; do
+  iwctl station "$dev" scan >/dev/null 2>&1 || true
+  sleep 3
+  mapfile -t rows < <(list_networks)
+  if (( ${#rows[@]} == 0 )); then
+    gum confirm "No Wi-Fi networks found." --affirmative "Scan again" --negative "Skip" && continue
+    exit 0
+  fi
+
+  choice="$(printf '%s\n' "${rows[@]}" | cut -f2- | gum choose --header "Choose a Wi-Fi network")" || exit 0
+  [[ -n $choice ]] || exit 0
+  security="$(printf '%s\n' "${rows[@]}" | awk -F'\t' -v n="$choice" '$2 == n { print $1; exit }')"
+
+  if [[ $security == "open" ]]; then
+    iwctl station "$dev" connect "$choice" >/dev/null 2>&1
+  else
+    pass="$(gum input --password --placeholder "Passphrase for $choice")" || exit 0
+    iwctl --passphrase "$pass" station "$dev" connect "$choice" >/dev/null 2>&1
+    unset pass
+  fi
+
+  if gum spin --title "Connecting to $choice..." -- bash -c "$(declare -f online wait_online); CHECK_HOST=$CHECK_HOST WAIT=$WAIT wait_online"; then
+    gum style "Connected to $choice."
+    exit 0
+  fi
+
+  gum confirm "Could not get online through $choice (wrong passphrase, or no DHCP/DNS within ${WAIT}s)." \
+    --affirmative "Try again" --negative "Skip" || exit 0
+done

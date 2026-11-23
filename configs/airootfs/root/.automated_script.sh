@@ -27,6 +27,9 @@ use_swarmarchy_helpers() {
 
 run_configurator() {
   set_tokyo_night_colors
+  # Offer Wi-Fi first, only when offline: the install itself needs no network, but the
+  # failure-log upload does. Never fatal (the helper always exits 0; || true guards set -e).
+  swarmarchy-live-wifi || true
   ./configurator
   export SWARMARCHY_USER="$(jq -r '.users[0].username' user_credentials.json)"
 }
