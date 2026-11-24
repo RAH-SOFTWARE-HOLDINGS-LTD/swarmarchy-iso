@@ -92,6 +92,15 @@ else
   git clone -b $SWARMARCHY_INSTALLER_REF https://github.com/$SWARMARCHY_INSTALLER_REPO.git "$build_cache_dir/airootfs/root/swarmarchy"
 fi
 
+# mkarchiso copies the airootfs with `cp --no-preserve=mode`, so every file under
+# /root/swarmarchy is mode 644 in the live system. Record which layer files are executable
+# here, while the modes are still intact, so the installer can restore exactly those. A
+# hand-kept list (bin/* and waybar *.sh) missed default/oo7/oo7-wait-pam-socket, which left
+# the oo7 keyring locked at every login, and system/.../unmount-fuse (2026-11-24 install).
+(cd "$build_cache_dir/airootfs/root/swarmarchy" && find . -path ./.git -prune -o -type f -perm -u+x -printf '%P\n') \
+  | sort >"$build_cache_dir/airootfs/root/swarmarchy.executables"
+echo "Layer executables recorded: $(wc -l <"$build_cache_dir/airootfs/root/swarmarchy.executables")"
+
 # Bundle Qualcomm board firmware, if present on the build host. These blobs are
 # proprietary: the ISO is for private use only and must never be published. They come from
 # ~/swarmarchy-pkgs-build/local/firmware (see swarmarchy-iso-make) and are read by

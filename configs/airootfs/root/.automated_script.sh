@@ -721,9 +721,15 @@ EOF
   cp -r /root/swarmarchy "$SWARMARCHY_SRC_TARGET"
   chown -R 1000:1000 "$SWARMARCHY_SRC_TARGET"
 
-  # Ensure all necessary scripts are executable
+  # Restore the executable bits mkarchiso stripped (cp --no-preserve=mode). build-iso.sh
+  # recorded every executable layer file in /root/swarmarchy.executables while the modes were
+  # intact. bin/* stays as a fallback for an ISO built before that list existed.
+  if [[ -f /root/swarmarchy.executables ]]; then
+    while IFS= read -r f; do
+      [[ -n $f && $f != *..* && -f $SWARMARCHY_SRC_TARGET/$f ]] && chmod +x "$SWARMARCHY_SRC_TARGET/$f"
+    done </root/swarmarchy.executables
+  fi
   find "$SWARMARCHY_SRC_TARGET" -type f -path "*/bin/*" -exec chmod +x {} \;
-  find "$SWARMARCHY_SRC_TARGET/default/waybar" -type f -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
 
 }
 
